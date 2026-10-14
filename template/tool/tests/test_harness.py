@@ -23,6 +23,14 @@ CLI = REPO / "tool" / "ai.py"
 HARNESS_PATHS = ["AGENTS.md", "CLAUDE.md", "REVIEW.md", ".ai", ".agents", "tool", "wiki", ".gitignore"]
 
 
+def fixture_config() -> dict:
+    """The repository's config without its project checks, whose tools a throwaway copy does not have."""
+    config = read_json(REPO / ".ai/config.json")
+    config.update(toolchain=[], checks=[])
+    config.pop("members", None)
+    return config
+
+
 class TempRepo:
     """A throwaway git repository holding a copy of the harness."""
 
@@ -35,6 +43,7 @@ class TempRepo:
             else:
                 shutil.copy2(source, self.root / name)
         (self.root / ".claude").mkdir()
+        self.write(".ai/config.json", json.dumps(fixture_config(), indent=2) + "\n")
         self.git("init", "-q", "-b", "main")
         self.git("config", "user.email", "test@example.com")
         self.git("config", "user.name", "test")
@@ -61,7 +70,7 @@ class TempRepo:
             return process.returncode, {"raw": process.stdout, "stderr": process.stderr}
 
     def set_checks(self, fragment: dict) -> None:
-        config = read_json(REPO / ".ai/config.json")
+        config = fixture_config()
         config.update(fragment)
         self.write(".ai/config.json", json.dumps(config, indent=2) + "\n")
 
@@ -115,7 +124,8 @@ class DocLinkTest(unittest.TestCase):
 
     def test_every_shipped_markdown_link_resolves(self):
         files = [p.relative_to(REPO).as_posix() for p in REPO.rglob("*.md")
-                 if ".git" not in p.parts and "runs" not in p.parts and ".claude" not in p.parts]
+                 if ".git" not in p.parts and "runs" not in p.parts and ".claude" not in p.parts
+                 and not checks.DEPENDENCY_SEGMENTS.intersection(p.parts)]
         self.assertEqual(docs.link_failures(REPO, files), [])
 
 
@@ -218,8 +228,12 @@ class GuardTest(unittest.TestCase):
 
 class WikiLintTest(unittest.TestCase):
     def setUp(self):
+        # An onboarded repository's own pages must not leak into the fixtures below.
         self.root = Path(tempfile.mkdtemp())
-        shutil.copytree(REPO / "wiki", self.root / "wiki")
+        (self.root / "wiki").mkdir()
+        shutil.copy(REPO / "wiki" / "README.md", self.root / "wiki" / "README.md")
+        (self.root / "wiki/index.md").write_text("# Wiki index\n\n## Facts\n\n## Notes\n")
+        (self.root / "wiki/log.md").write_text("# Wiki log\n")
 
     def tearDown(self):
         shutil.rmtree(self.root)
@@ -230,7 +244,7 @@ class WikiLintTest(unittest.TestCase):
         target.write_text(f"---\n{meta}\n---\n# Title\n{body}\n")
 
     def test_shipped_wiki_is_clean(self):
-        self.assertEqual(wiki.lint(self.root, "wiki")[0], [])
+        self.assertEqual(wiki.lint(REPO, "wiki")[0], [])
 
     def test_valid_pages(self):
         common = "layer: facts\ntags: [architecture]\nsources:\n  - manual:2026-10-13\ncreated: 2026-10-13\nupdated: 2026-10-13"
