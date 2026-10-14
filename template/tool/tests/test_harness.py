@@ -171,12 +171,14 @@ class GuardTest(unittest.TestCase):
     def test_blocks_irreversible_git(self):
         for command in ["git push --force", "git push -f origin main", "git push origin +main", "git reset --hard HEAD~1",
                         "git clean -fd", "git checkout -- src/a.ts", "git checkout .", "git restore src/a.ts",
-                        "git branch -D feature/x", "git stash drop"]:
+                        "git branch -D feature/x", "git stash drop", "git push origin --delete feature/x",
+                        "git push origin :feature/x", "git push -d origin v1.0", "git push --prune origin", "git push --mirror"]:
             self.assertTrue(self.blocked(command), command)
 
     def test_allows_safe_git(self):
         for command in ["git status", "git push -u origin feature/x", "git restore --staged a.ts", "git checkout -b feature/x",
-                        "git push origin main && rm -rf build", "git diff --check HEAD --"]:
+                        "git push origin main && rm -rf build", "git diff --check HEAD --", "git push origin HEAD:refs/heads/feature/x",
+                        "git branch -d feature/x"]:
             self.assertFalse(self.blocked(command), command)
 
     def test_secret_reads(self):
@@ -213,6 +215,14 @@ class GuardTest(unittest.TestCase):
             self.assertTrue(self.blocked(command), command)
         for command in ["cp .env.example .env", "echo $PWD", "cat *.md", "source .env && npm run dev",
                         "node -e \"console.log(process.env.NODE_ENV)\""]:
+            self.assertFalse(self.blocked(command), command)
+        for command in ["git show HEAD:.env", "git show :.env", "git cat-file -p HEAD~2:apps/.env.local", "git log -p -- .env",
+                        "git log --all --patch -- '.env*'", "git diff HEAD~1 -- .env", "git show abc123 -- .env", "git blame .env",
+                        "git grep TOKEN HEAD -- .env", "tee /tmp/x < .env", "while read l; do echo $l; done < .env", "cat<.env"]:
+            self.assertTrue(self.blocked(command), command)
+        for command in ["git log --all --full-history -- '.env*'", "git log --oneline -- .env", "git diff --stat HEAD~1 -- .env",
+                        "git show --name-only abc123 -- .env", "git show HEAD:.env.example", "git grep -l TOKEN -- .env",
+                        "cut -d= -f1 < .env", "grep -q TOKEN < .env", "git log -p -- src/app.ts"]:
             self.assertFalse(self.blocked(command), command)
         grep = {"tool_name": "Grep", "tool_input": {"pattern": ".", "path": ".env", "output_mode": "content"}}
         self.assertIsNotNone(guard.evaluate(grep))

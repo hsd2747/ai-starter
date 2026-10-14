@@ -34,6 +34,10 @@ SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 WRAPPERS = {"sudo", "doas", "nice", "nohup", "time", "command", "builtin", "exec", "xargs"}
 WRAPPER_VALUE_OPTIONS = {"-u", "-g", "-n", "-p", "-I", "-P", "-L", "-s"}
 GIT_GLOBAL_VALUE_OPTIONS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env"}
+GIT_CONTENT_READERS = {"show", "diff", "log", "cat-file", "blame", "annotate", "grep"}
+GIT_SUMMARY_OPTIONS = {"--stat", "--shortstat", "--numstat", "--name-only", "--name-status", "--no-patch", "--quiet"}
+GIT_PATCH_OPTIONS = {"--patch", "--patch-with-stat", "--patch-with-raw"}
+GIT_PUSH_DELETE_OPTIONS = {"--delete", "--mirror", "--prune"}
 
 BROAD_TARGETS = {"/", "/*", "~", "~/", "~/*", "$HOME", "$HOME/", "$HOME/*", ".", "./", "./*", "..", "../", "../*", "*", ".*"}
 FIND_NARROWING = {"-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex"}
@@ -139,6 +143,11 @@ def _git_reason(args: list[str]) -> str | None:
     flags = _short_flags(rest)
     if sub == "push" and ("f" in flags or any(a.startswith("+") or a.split("=")[0] in ("--force", "--force-with-lease") for a in rest)):
         return "force push rewrites shared history (force-push)."
+    if sub == "push" and ("d" in flags or any(a.split("=")[0] in GIT_PUSH_DELETE_OPTIONS or (a.startswith(":") and len(a) > 1)
+                                              for a in rest)):
+        return "this push deletes remote branches or tags (push-delete)."
+    if _git_env_read(sub, rest):
+        return "git would print env file contents from history or the index (env-read)."
     if sub == "reset" and "--hard" in rest:
         return "git reset --hard discards uncommitted work (reset-hard)."
     if sub == "clean" and ("f" in flags or "--force" in rest):
@@ -158,6 +167,37 @@ def _git_reason(args: list[str]) -> str | None:
     if sub == "stash" and rest[:1] in (["drop"], ["clear"]):
         return "dropping a stash loses its changes (stash-drop)."
     return None
+
+
+def _git_env_read(sub: str | None, rest: list[str]) -> bool:
+    """Env files reach git output through `<rev>:<path>` objects and pathspecs, even after they are deleted or ignored."""
+    if sub not in GIT_CONTENT_READERS:
+        return False
+    if any(":" in a and _mentions_env(a.split(":", 1)[1]) for a in rest):
+        return True
+    if not any(_mentions_env(a) for a in rest):
+        return False
+    options = {a.split("=")[0] for a in rest}
+    if sub == "log":
+        # Listing the commits that touched an env file is how a leak is investigated; only patches print values.
+        return bool(set(_short_flags(rest)) & set("pu") or options & GIT_PATCH_OPTIONS)
+    if sub == "grep":
+        return not _quiet_search(rest)
+    if sub in ("diff", "show"):
+        return not (options & GIT_SUMMARY_OPTIONS or (sub == "show" and "s" in _short_flags(rest)))
+    return True
+
+
+def _quiet_search(args: list[str]) -> bool:
+    return any(a in QUIET_SEARCH_FLAGS or (a.startswith("-") and not a.startswith("--") and set(a[1:]) & set("qclL")) for a in args)
+
+
+def _names_only_cut(args: list[str]) -> bool:
+    return "-f1" in args or _after(args, "-f") == "1"
+
+
+def _redirects_env(tokens: list[str]) -> bool:
+    return any(token == "<" and i + 1 < len(tokens) and _mentions_env(tokens[i + 1]) for i, token in enumerate(tokens))
 
 
 def _broad_rm(args: list[str]) -> bool:
@@ -214,10 +254,9 @@ def _env_leak(program: str, args: list[str], bodies: list[str]) -> bool:
     if program in VIEWERS:
         return True
     if program in SEARCHERS:
-        return not any(a in QUIET_SEARCH_FLAGS or (a.startswith("-") and not a.startswith("--") and set(a[1:]) & set("qclL"))
-                       for a in args)
+        return not _quiet_search(args)
     if program == "cut":
-        return "-f1" not in args and _after(args, "-f") != "1"
+        return not _names_only_cut(args)
     if program in COPIERS:
         operands = [a for a in args if not a.startswith("-")]
         return len(operands) >= 2 and any(_mentions_env(s) for s in operands[:-1]) and not _mentions_env(operands[-1])
@@ -235,6 +274,8 @@ def _segment_reason(tokens: list[str], bodies: list[str], depth: int) -> str | N
         return None
     if program == "eval":
         return command_reason(" ".join(args), depth + 1)
+    if _redirects_env(tokens) and not ((program in SEARCHERS and _quiet_search(args)) or (program == "cut" and _names_only_cut(args))):
+        return "input redirected from an env file can print its values (env-read)."
     if program == "git":
         return _git_reason(args)
     if program == "rm" and _broad_rm(args):

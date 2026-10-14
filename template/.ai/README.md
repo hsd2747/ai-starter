@@ -52,9 +52,10 @@ Everything language-specific comes from `checks` in `.ai/config.json`, which onl
 
 ## Guard hook
 
-`.claude/settings.json` registers `python3 tool/ai.py hook pre-tool-use`. It blocks force pushes, `git reset --hard`, `git clean -f`,
-worktree-discarding `git restore`/`git checkout`/`git switch`, force branch deletion, stash drops, recursive `rm` or `find -delete` on broad
-targets, and reading, copying, or printing `.env` files and secret-looking environment variables. Commands are parsed with shell quoting:
+`.claude/settings.json` registers `python3 tool/ai.py hook pre-tool-use`. It blocks force pushes, pushes that delete remote branches or tags,
+`git reset --hard`, `git clean -f`, worktree-discarding `git restore`/`git checkout`/`git switch`, force branch deletion, stash drops,
+recursive `rm` or `find -delete` on broad targets, and reading, copying, or printing `.env` files (including through git history and `<`
+redirection) and secret-looking environment variables. Listing the commits that touched an env file (`git log -- '.env*'`) stays allowed. Commands are parsed with shell quoting:
 global git options, `sudo`, `bash -c`, and heredocs fed to a shell are seen through, while text in a commit message or a heredoc written
 to a file is not a command. Instructions in `AGENTS.md` are context; the hook is enforcement. When a blocked action is really intended,
 the user runs it with the `!` prefix. The guard reduces accidents; it is not a security boundary.
