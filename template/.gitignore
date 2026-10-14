@@ -1,0 +1,30 @@
+# Harness run state: contracts in progress, receipts, logs.
+.ai/runs/
+
+# Secrets. Commit only templates such as .env.example.
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+!.env.dist
+
+# Signing keys and credentials. Keep them in a secret store; secret-scan fails while one is tracked or unignored.
+*.jks
+*.keystore
+*.p8
+*.p12
+*.pfx
+key.properties
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+client_secret*.json
+
+# Python caches from tool/
+__pycache__/
+*.pyc
+
+# OS and editor noise
+.DS_Store

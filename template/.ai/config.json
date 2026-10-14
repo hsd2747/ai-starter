@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "onboarded": false,
+  "project": {
+    "name": "",
+    "summary": ""
+  },
+  "git": {
+    "baseBranch": "main",
+    "branchPattern": "feature/{KEY}",
+    "ticketKeyPattern": ""
+  },
+  "wiki": {
+    "root": "wiki",
+    "language": "en"
+  },
+  "toolchain": [],
+  "checks": []
+}

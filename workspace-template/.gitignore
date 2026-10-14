@@ -1,0 +1,13 @@
+# The workspace repository tracks only its own files. Every repository folder is ignored,
+# so new ones need no entry here and are never added as embedded repositories.
+/*
+!/.gitignore
+!/AGENTS.md
+!/CLAUDE.md
+!/workspace.json
+!/.claude/
+!/.ai/
+
+__pycache__/
+*.pyc
+.DS_Store

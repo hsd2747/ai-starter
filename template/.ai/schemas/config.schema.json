@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ai-starter/config.schema.json",
+  "title": "Harness configuration",
+  "description": "Project settings and every language-specific command the verifier may run. Written by onboarding; changing checks or toolchain is an L2 change to the verification contract.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "onboarded", "project", "git", "wiki", "toolchain", "checks"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "onboarded": { "type": "boolean" },
+    "onboardedAt": { "type": "string", "format": "date" },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "summary"],
+      "properties": {
+        "name": { "type": "string" },
+        "summary": { "type": "string" }
+      }
+    },
+    "git": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baseBranch", "branchPattern", "ticketKeyPattern"],
+      "properties": {
+        "baseBranch": { "type": "string", "format": "non-blank" },
+        "branchPattern": { "type": "string", "pattern": "\\{KEY\\}" },
+        "ticketKeyPattern": { "description": "Regex for ticket keys such as ABC-123. Empty disables the ticket-branch question.", "type": "string", "format": "regex" }
+      }
+    },
+    "wiki": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "language"],
+      "properties": {
+        "root": { "type": "string", "format": "relative-path" },
+        "language": { "type": "string", "format": "non-blank" }
+      }
+    },
+    "members": {
+      "description": "Workspace members (packages) for checks with per: member. A member is a directory matching a glob that contains the marker file.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["globs", "marker"],
+      "properties": {
+        "globs": { "$ref": "#/$defs/globList", "minItems": 1 },
+        "marker": { "type": "string", "format": "non-blank" }
+      }
+    },
+    "ignore": { "description": "Extra paths no check should read, in addition to package-manager install trees.", "$ref": "#/$defs/globList" },
+    "jsonc": { "description": "Extra JSON-with-comments files the json-syntax check must skip.", "$ref": "#/$defs/globList" },
+    "toolchain": {
+      "description": "Tools whose versions every receipt records and doctor requires.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "command"],
+        "properties": {
+          "name": { "type": "string", "format": "check-id" },
+          "command": { "$ref": "#/$defs/command" },
+          "required": { "type": "boolean" }
+        }
+      }
+    },
+    "checks": { "type": "array", "items": { "$ref": "#/$defs/check" } }
+  },
+  "$defs": {
+    "globList": { "type": "array", "items": { "type": "string", "format": "non-blank" } },
+    "command": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description", "command"],
+      "properties": {
+        "id": { "type": "string", "format": "check-id" },
+        "description": { "type": "string", "format": "non-blank" },
+        "stage": { "enum": ["early", "generate", "late"] },
+        "when": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "paths": { "$ref": "#/$defs/globList" },
+            "contentPattern": { "type": "string", "format": "regex" }
+          }
+        },
+        "command": { "$ref": "#/$defs/command" },
+        "allCommand": { "$ref": "#/$defs/command" },
+        "cwd": { "type": "string", "format": "relative-path" },
+        "per": { "enum": ["repo", "member"] },
+        "memberSelect": { "enum": ["changed", "all"] },
+        "memberHas": { "type": "string", "format": "non-blank" },
+        "required": { "type": "boolean" },
+        "mutates": { "type": "boolean" },
+        "timeoutSec": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}

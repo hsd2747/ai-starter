@@ -1,0 +1,4 @@
+# Wiki catalogs only gain lines, so parallel branches merge by keeping both sides.
+# If wiki.root in .ai/config.json changes, move these paths with it.
+wiki/log.md merge=union
+wiki/index.md merge=union

@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ai-starter/verification.schema.json",
+  "title": "Verification receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "runId", "generatedAt", "subject", "toolchain", "overall", "checks"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "runId": { "type": "string", "format": "run-id" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "head", "worktreeDigest", "files"],
+      "properties": {
+        "scope": { "enum": ["changed", "all"] },
+        "base": { "description": "Commit or tree the changed files were diffed against.", "type": "string", "minLength": 7 },
+        "baseRef": { "description": "Where the base came from: the base branch whose merge base was used, HEAD, or none.", "type": "string", "minLength": 1 },
+        "head": { "type": "string", "minLength": 7 },
+        "worktreeDigest": { "type": "string", "minLength": 7 },
+        "files": { "type": "array", "items": { "type": "string", "format": "relative-path" } }
+      }
+    },
+    "toolchain": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "format": "non-blank" }
+    },
+    "overall": { "enum": ["pass", "fail", "skipped"] },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "command", "cwd", "status", "durationMs", "summary"],
+        "properties": {
+          "id": { "type": "string", "format": "check-id" },
+          "command": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+          "cwd": { "type": "string", "minLength": 1 },
+          "status": { "enum": ["pass", "fail", "skipped"] },
+          "exitCode": { "type": "integer" },
+          "durationMs": { "type": "integer", "minimum": 0 },
+          "summary": { "type": "string" },
+          "logPath": { "type": "string" }
+        }
+      }
+    }
+  }
+}

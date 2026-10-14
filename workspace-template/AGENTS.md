@@ -1,0 +1,29 @@
+# Workspace
+
+This folder groups the repositories of one product. Use this file for work that spans repositories.
+Each repository is self-contained: its own `AGENTS.md`, checks, and wiki rule inside it, and CI or a teammate who clones
+a single repository never sees this file. Never move a rule that a repository needs into this file.
+
+## Repositories
+
+The table between the markers is generated from `workspace.json` by the starter CLI; edit roles there, not here.
+
+<!-- workspace:repos:start -->
+<!-- workspace:repos:end -->
+
+- **managed**: created or adopted with the ai-starter harness. Its `AGENTS.md` defines risk levels, verification, and the wiki.
+- **registered**: listed here for its role only. It has no harness; follow its own conventions and ask before adding harness files to it.
+
+## Contracts between repositories
+
+Not written yet. For each contract, name the owner, the consumers, and where its source of truth lives, one line each.
+For example: `be` owns the HTTP API; its OpenAPI document is the source of truth; `app` and `web` consume it.
+
+## Rules
+
+- Before writing in a repository, read that repository's `AGENTS.md`. Its rules win inside it.
+- Run checks from inside the repository: `cd <repo> && python3 tool/ai.py verify`. Run from this folder, the CLI finds the wrong root and fails.
+- Changing a contract that a repository owns is at least L2 there. Name every consumer repository and what it must change in the completion report,
+  and change consumers in their own repositories, as separate tasks with their own verification.
+- Commits, branches, and pushes happen per repository and only when the user asks.
+- This folder's own git history tracks only this file, `CLAUDE.md`, `workspace.json`, `.gitignore`, and `.claude/`, `.ai/`; repositories are ignored, never submodules.

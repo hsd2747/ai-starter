@@ -1,0 +1,16 @@
+# Harness run state: contracts in progress, receipts, logs.
+.ai/runs/
+
+# Secrets. Commit only templates such as .env.example.
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# Python caches from tool/
+__pycache__/
+*.pyc
+
+# OS and editor noise
+.DS_Store
