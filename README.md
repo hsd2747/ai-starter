@@ -39,6 +39,22 @@ After editing roles or remotes in `workspace.json`, rewrite the table in the wor
 python3 tool/starter.py sync --workspace ~/work/my-product
 ```
 
+## Bring starter changes into existing repositories
+
+```bash
+python3 tool/starter.py upgrade --workspace ~/work/my-product --dry-run   # plan for the workspace root and every managed repository
+python3 tool/starter.py upgrade --workspace ~/work/my-product             # apply
+python3 tool/starter.py upgrade --workspace ~/work/my-product --name be   # one repository only
+```
+
+Each target recorded the starter commit it came from (`.ai/harness.json`, or `workspace.json` for the workspace root). For every harness file,
+`upgrade` merges three versions with `git merge-file`: that commit's template, the current template, and the file in the target.
+Onboarding edits and starter edits on different lines both survive; the same lines changed on both sides leave conflict markers,
+which `verify` then reports until they are resolved. Files the starter removed are listed, never deleted.
+
+The starter must be committed, and every file `upgrade` would write must be committed and unmodified in its target;
+otherwise nothing is written anywhere. The result arrives as an ordinary uncommitted diff in each repository.
+
 ## Saved workspaces
 
 `new`, `adopt`, and `sync` save their workspace in `~/.claude/ai-starter/workspaces.json`, most recent first, so the skills below
@@ -62,6 +78,7 @@ Each skill starts from the saved workspace list; when it is empty, the skill exp
 | `starter-onboard-repo` | "Onboard be" | Runs the repository's own `repo-onboard` under its `AGENTS.md`, from this session |
 | `starter-adopt-repo` | "Add the existing admin repository" | Chooses register or install, runs `adopt` |
 | `starter-workspace` | "Record the contracts between be and app" | Edits roles and the contracts section, proposes per-repository rules |
+| `starter-upgrade` | "Bring the latest starter into my-product" | Shows the dry run, runs `upgrade`, helps resolve conflicts, runs `verify` |
 
 Onboarding from this session does not load the repository's own hook and permission settings. For daily work, open a session in the repository itself.
 
@@ -97,6 +114,4 @@ Maintenance rules for this starter are in `AGENTS.md`.
 
 ## Not decided yet
 
-- TODO(owner): an `upgrade` command that brings starter changes into existing repositories. `.ai/harness.json` already records
-  the starter commit and a hash per installed file, so an upgrade can tell files a project changed from files the starter changed.
 - TODO(owner): decide whether to add optional local search (for example qmd) once a project wiki grows past a few hundred pages; `index.md` and grep are enough until then.

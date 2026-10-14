@@ -30,8 +30,9 @@ Open this repository in your agent (Claude Code, Codex, Cursor, Gemini CLI, Copi
 `AGENTS.md` sends every agent to `repo-onboard` while `.ai/config.json` says `"onboarded": false`. Onboarding writes the settings and checks
 in `.ai/config.json`, the repository map in `AGENTS.md`, the first architecture pages in `wiki/`, and the CI toolchain step, then runs `doctor` and `verify --all`.
 
-`.ai/harness.json` records the starter commit and a hash of every file it installed. Keep it: a later harness upgrade compares against it
-to tell files you changed from files the starter changed.
+`.ai/harness.json` records the starter commit and a hash of every file it installed. Keep it: `python3 tool/starter.py upgrade`, run in the starter,
+uses that commit as the base of a 3-way merge per harness file, so both your edits and the starter's arrive. It writes only harness files that are
+committed and unmodified, and leaves conflict markers where both sides changed the same lines.
 
 ## CLI
 

@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import date
 from pathlib import Path
 
@@ -45,6 +46,10 @@ python3 tool/starter.py <command>
         A repository registered earlier without --install can be adopted again with --install.
   sync  --workspace PATH
         Rewrite the repository table in the workspace AGENTS.md from workspace.json, after editing roles or remotes there.
+  upgrade --workspace PATH [--name NAME ...] [--dry-run]
+        Bring starter changes into managed repositories (all of them and the workspace root, or only the named ones)
+        with a 3-way merge per harness file against the starter commit each one recorded. Every file it would write must
+        be committed and unmodified; otherwise nothing is written. Conflicts are left as markers and listed.
   workspace list | add --path PATH | remove --path PATH
         The saved workspace list (~/.claude/ai-starter/workspaces.json, or $AI_STARTER_REGISTRY), most recent first.
         new, adopt, and sync record their workspace there. remove only forgets the entry; it never touches the folder.
@@ -255,15 +260,22 @@ def install(repo: Path, files: list[str], mode: str, version: dict) -> list[str]
     return merged
 
 
+def _pattern_lines(text: str) -> list[str]:
+    return [line for line in text.splitlines() if line.strip() and not line.startswith("#")]
+
+
+def _with_lines(existing: str, missing: list[str]) -> str:
+    separator = "" if existing.endswith("\n") or not existing else "\n"
+    return existing + separator + "\n# ai-starter harness\n" + "\n".join(missing) + "\n"
+
+
 def _append_missing_lines(source: Path, dest: Path) -> bool:
     existing = dest.read_text(encoding="utf-8")
     present = {line.strip() for line in existing.splitlines()}
-    missing = [line for line in source.read_text(encoding="utf-8").splitlines()
-               if line.strip() and not line.startswith("#") and line.strip() not in present]
+    missing = [line for line in _pattern_lines(source.read_text(encoding="utf-8")) if line.strip() not in present]
     if not missing:
         return False
-    separator = "" if existing.endswith("\n") or not existing else "\n"
-    dest.write_text(existing + separator + "\n# ai-starter harness\n" + "\n".join(missing) + "\n", encoding="utf-8")
+    dest.write_text(_with_lines(existing, missing), encoding="utf-8")
     return True
 
 
@@ -309,6 +321,202 @@ def _describe_workspace(entry: dict) -> dict:
 
 def _base_branch() -> str:
     return _read_json(TEMPLATE / ".ai/config.json")["git"]["baseBranch"]
+
+
+Content = tuple  # ("file", bytes) or ("link", bytes of the link target)
+
+
+def _disk(path: Path) -> Content | None:
+    if path.is_symlink():
+        return ("link", os.readlink(path).encode())
+    return ("file", path.read_bytes()) if path.is_file() else None
+
+
+def _git_ok(cwd: Path, *args: str) -> bool:
+    return subprocess.run(["git", *args], cwd=cwd, capture_output=True).returncode == 0
+
+
+def _starter_listing(commit: str) -> dict[str, tuple[str, str]]:
+    """{starter path: (mode, blob)} of template/ and workspace-template/ at `commit`."""
+    process = subprocess.run(["git", "ls-tree", "-r", "-z", commit, "--", "template", "workspace-template"],
+                             cwd=STARTER, capture_output=True)
+    if process.returncode != 0:
+        raise StarterError(f"Cannot list starter commit {commit}: {process.stderr.decode(errors='replace').strip()}")
+    listing = {}
+    for item in process.stdout.split(b"\0"):
+        if item:
+            meta, path = item.split(b"\t", 1)
+            mode, _, blob = meta.decode().split()
+            listing[path.decode()] = (mode, blob)
+    return listing
+
+
+def _blob(listing: dict[str, tuple[str, str]], source: str) -> Content | None:
+    if source not in listing:
+        return None
+    mode, blob = listing[source]
+    data = subprocess.run(["git", "cat-file", "blob", blob], cwd=STARTER, capture_output=True, check=True).stdout
+    return ("link" if mode == "120000" else "file", data)
+
+
+def _merge(ours: bytes, base: bytes, theirs: bytes, label: str) -> tuple[bytes, int]:
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = []
+        for name, data in (("ours", ours), ("base", base), ("theirs", theirs)):
+            (Path(tmp) / name).write_bytes(data)
+            paths.append(str(Path(tmp) / name))
+        process = subprocess.run(["git", "merge-file", "-p", "-L", label, "-L", "starter (installed)", "-L", "starter (current)", *paths],
+                                 cwd=tmp, capture_output=True)
+    # merge-file exits with the number of conflicts, capped at 127; anything above is an error.
+    if process.returncode > 127:
+        raise StarterError(f"git merge-file failed: {process.stderr.decode(errors='replace').strip()}")
+    return process.stdout, process.returncode
+
+
+def plan_upgrade(root: Path, label: str, owned: set[str], sources: dict[str, str], base_source, listing: dict,
+                 append_only: set[str] = frozenset()) -> dict:
+    """What an upgrade does to one target, computed without writing.
+
+    `owned` are the destination paths the starter installed at the recorded commit, `sources` maps every destination path
+    the starter ships now to its starter path, and `base_source` maps a destination path to its starter path at that commit.
+    """
+    plan: dict = {"writes": {}, "owned": set(), "updated": [], "merged": [], "conflicts": [], "added": [], "skipped": [], "removedUpstream": []}
+    for rel in sorted(owned | sources.keys()):
+        ours = _disk(root / rel)
+        if rel not in sources:
+            if ours is not None:
+                plan["removedUpstream"].append(rel)
+            continue
+        theirs = _disk(STARTER / sources[rel])
+        base = _blob(listing, base_source(rel)) if rel in owned else None
+        if rel in owned or ours == theirs:
+            plan["owned"].add(rel)
+        if ours == theirs or (base is not None and base == theirs):
+            continue
+        if rel not in owned:
+            if ours is None:
+                plan["writes"][rel] = (theirs, sources[rel])
+                plan["added"].append(rel)
+                plan["owned"].add(rel)
+            else:
+                plan["skipped"].append({"path": rel, "reason": "new in the starter but a different file already exists here; merge by hand"})
+            continue
+        if base is None:
+            plan["skipped"].append({"path": rel, "reason": "not in the recorded starter commit, so there is no base to merge from"})
+        elif ours is None:
+            plan["skipped"].append({"path": rel, "reason": "deleted here but changed in the starter; restore it by hand if it is still wanted"})
+        elif ours == base:
+            plan["writes"][rel] = (theirs, sources[rel])
+            plan["updated"].append(rel)
+        elif "link" in (ours[0], base[0], theirs[0]) or any(b"\0" in c[1] for c in (ours, base, theirs)):
+            plan["skipped"].append({"path": rel, "reason": "changed both here and in the starter, and it is a link or binary; merge by hand"})
+        elif rel in append_only:
+            present = {line.strip() for line in ours[1].decode().splitlines()}
+            installed = {line.strip() for line in base[1].decode().splitlines()}
+            missing = [line for line in _pattern_lines(theirs[1].decode()) if line.strip() not in installed | present]
+            if missing:
+                plan["writes"][rel] = (("file", _with_lines(ours[1].decode(), missing).encode()), sources[rel])
+                plan["merged"].append(rel)
+        else:
+            merged, conflicts = _merge(ours[1], base[1], theirs[1], label)
+            plan["writes"][rel] = (("file", merged), sources[rel])
+            plan["conflicts" if conflicts else "merged"].append(rel)
+    return plan
+
+
+def _dirty(root: Path, paths: list[str]) -> list[str]:
+    output = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--", *paths], cwd=root,
+                            capture_output=True, text=True).stdout
+    return sorted(line[3:] for line in output.splitlines())
+
+
+def _apply(root: Path, writes: dict[str, tuple[Content, str]]) -> None:
+    for rel, ((kind, data), source) in writes.items():
+        dest = root / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if dest.is_symlink() or (kind == "link" and os.path.lexists(dest)):
+            dest.unlink()
+        if kind == "link":
+            os.symlink(data.decode(), dest)
+        else:
+            dest.write_bytes(data)
+            shutil.copymode(STARTER / source, dest)
+
+
+def _guard_dest(source: str) -> str | None:
+    """Destination in the workspace root of a starter path, for the files a workspace copies."""
+    if source.startswith("workspace-template/"):
+        return source.removeprefix("workspace-template/")
+    if source == "template/tool/ai.py" or source.startswith("template/tool/ai_harness/"):
+        return f"{GUARD_DIR}/{source.removeprefix('template/tool/')}"
+    return None
+
+
+def _workspace_source(rel: str) -> str:
+    return f"template/tool/{rel.removeprefix(GUARD_DIR + '/')}" if rel.startswith(GUARD_DIR + "/") else f"workspace-template/{rel}"
+
+
+def _target_report(name: str, root: Path, commit: str | None) -> dict:
+    return {"target": name, "path": str(root), "from": commit, "blockers": []}
+
+
+def _check_base(report: dict, commit: str | None, version: dict) -> bool:
+    if not commit:
+        report["blockers"].append("no starter commit is recorded, so there is no base to merge from; upgrade it by hand")
+    elif not _git_ok(STARTER, "cat-file", "-e", f"{commit}^{{commit}}"):
+        report["blockers"].append(f"the recorded starter commit {commit[:12]} is not in this starter's history")
+    elif not _git_ok(STARTER, "merge-base", "--is-ancestor", commit, version["commit"]):
+        report["blockers"].append(f"the recorded starter commit {commit[:12]} is not an ancestor of the starter HEAD")
+    else:
+        report["upToDate"] = commit == version["commit"]
+        return not report["upToDate"]
+    return False
+
+
+def _finish_plan(report: dict, root: Path, plan: dict, record: str) -> None:
+    for key in ("updated", "merged", "conflicts", "added", "skipped", "removedUpstream"):
+        report[key] = plan[key]
+    dirty = _dirty(root, [*plan["writes"], record])
+    if dirty:
+        report["blockers"].append(f"commit or stash these first so the upgrade arrives as its own reviewable change: {dirty}")
+
+
+def _plan_repository(workspace: Path, repo: dict, version: dict, listings: dict) -> tuple[dict, dict | None]:
+    root = workspace / repo["path"]
+    record_path = root / HARNESS_RECORD
+    record = _read_json(record_path) if record_path.is_file() else None
+    commit = ((record or {}).get("starter") or {}).get("commit")
+    report = _target_report(repo["name"], root, commit)
+    if record is None:
+        report["blockers"].append(f"{HARNESS_RECORD} is missing")
+        return report, None
+    if not _check_base(report, commit, version):
+        return report, None
+    if (record.get("starter") or {}).get("dirty"):
+        report["warning"] = "it was installed from a starter with uncommitted template changes; review the merged files closely"
+    listing = listings.setdefault(commit, _starter_listing(commit))
+    sources = {rel: f"template/{rel}" for rel in tree_files(TEMPLATE)}
+    append_only = MERGED_ON_ADOPT if record.get("mode") == "adopt" else set()
+    plan = plan_upgrade(root, repo["name"], set(record.get("files", {})), sources, lambda rel: f"template/{rel}", listing, append_only)
+    _finish_plan(report, root, plan, HARNESS_RECORD)
+    record = {**record, "starter": version, "upgradedAt": date.today().isoformat(),
+              "files": {rel: file_hash(TEMPLATE / rel) for rel in sorted(plan["owned"])}}
+    return report, {"root": root, "plan": plan, "record_path": record_path, "record": record}
+
+
+def _plan_workspace(workspace: Path, manifest: dict, version: dict, listings: dict) -> tuple[dict, dict | None]:
+    commit = (manifest.get("starter") or {}).get("commit")
+    report = _target_report("workspace", workspace, commit)
+    if not _check_base(report, commit, version):
+        return report, None
+    listing = listings.setdefault(commit, _starter_listing(commit))
+    owned = {dest for dest in map(_guard_dest, listing) if dest}
+    sources = {rel: f"workspace-template/{rel}" for rel in tree_files(WORKSPACE_TEMPLATE)}
+    sources.update({f"{GUARD_DIR}/{rel}": f"template/tool/{rel}"
+                    for rel in ["ai.py", *(f"ai_harness/{f}" for f in tree_files(TEMPLATE / "tool" / "ai_harness"))]})
+    plan = plan_upgrade(workspace, "workspace", owned, sources, _workspace_source, listing)
+    _finish_plan(report, workspace, plan, WORKSPACE_FILE)
+    return report, {"root": workspace, "plan": plan, "record_path": workspace / WORKSPACE_FILE, "record": {**manifest, "starter": version}}
 
 
 def cmd_new(args: argparse.Namespace) -> dict:
@@ -399,6 +607,46 @@ def cmd_sync(args: argparse.Namespace) -> dict:
     return {"ok": True, "workspace": str(workspace), "repos": [r["name"] for r in manifest["repos"]], "warnings": remember_workspace(workspace)}
 
 
+def cmd_upgrade(args: argparse.Namespace) -> dict:
+    workspace = _resolve_workspace(args.workspace)
+    manifest = _load_workspace(workspace)
+    if manifest is None:
+        raise StarterError(f"{workspace} has no {WORKSPACE_FILE}.")
+    version = starter_version()
+    if version["commit"] is None or version["dirty"]:
+        raise StarterError("Commit the starter first: an upgrade records the starter commit as the base of the next one, "
+                           "so template/ and workspace-template/ must match it.")
+    repos = {r["name"]: r for r in manifest.get("repos", [])}
+    for name in args.name:
+        if name not in repos:
+            raise StarterError(f"The workspace does not register {name!r}.")
+        if repos[name]["kind"] != "managed":
+            raise StarterError(f"{name!r} is registered without the harness; install it with `adopt --install` instead.")
+
+    listings: dict = {}
+    planned = [_plan_workspace(workspace, manifest, version, listings)] if not args.name else []
+    names = args.name or [r["name"] for r in manifest["repos"] if r["kind"] == "managed"]
+    planned += [_plan_repository(workspace, repos[name], version, listings) for name in names]
+    reports = [report for report, _ in planned]
+    blocked = [f"{r['target']}: {b}" for r in reports for b in r["blockers"]]
+    if blocked and not args.dry_run:
+        raise StarterError("Nothing was written. " + " | ".join(blocked))
+
+    if not args.dry_run:
+        for _, work in planned:
+            if work:
+                _apply(work["root"], work["plan"]["writes"])
+                _write_json(work["record_path"], work["record"])
+    conflicts = [f"{r['path']}/{c}" for r in reports for c in r.get("conflicts", [])]
+    result = {"ok": True, "dryRun": args.dry_run, "starter": version, "targets": reports,
+              "warnings": [f"{r['target']}: {r['warning']}" for r in reports if r.get("warning")]}
+    if not args.dry_run:
+        result["warnings"] += remember_workspace(workspace)
+        result["next"] = ("Resolve the conflict markers in: " + ", ".join(conflicts) + ". Then " if conflicts else "") + \
+            "run `python3 tool/ai.py verify` in each upgraded repository and review the diff there; nothing was committed."
+    return result
+
+
 def cmd_workspace(args: argparse.Namespace) -> dict:
     if args.action == "list":
         return {"ok": True, "registry": str(registry_path()), "workspaces": [_describe_workspace(w) for w in _load_registry()["workspaces"]]}
@@ -437,6 +685,10 @@ def _parser() -> argparse.ArgumentParser:
     adopt.add_argument("--install", action="store_true")
     sync = sub.add_parser("sync", add_help=False)
     sync.add_argument("--workspace", required=True)
+    upgrade = sub.add_parser("upgrade", add_help=False)
+    upgrade.add_argument("--workspace", required=True)
+    upgrade.add_argument("--name", action="append", default=[])
+    upgrade.add_argument("--dry-run", action="store_true")
     workspace = sub.add_parser("workspace", add_help=False)
     workspace.add_argument("action", choices=["list", "add", "remove"])
     workspace.add_argument("--path", default="")
@@ -453,7 +705,7 @@ def main(argv: list[str]) -> int:
         print(json.dumps({"ok": False, "error": f"Invalid arguments: {' '.join(argv)}", "usage": USAGE}, indent=2))
         return 1
     try:
-        report = {"new": cmd_new, "adopt": cmd_adopt, "sync": cmd_sync, "workspace": cmd_workspace}[args.command](args)
+        report = {"new": cmd_new, "adopt": cmd_adopt, "sync": cmd_sync, "upgrade": cmd_upgrade, "workspace": cmd_workspace}[args.command](args)
     except StarterError as error:
         print(json.dumps({"ok": False, "error": str(error)}, indent=2, ensure_ascii=False))
         return 1
