@@ -7,9 +7,10 @@ description: Bring an existing repository that this starter did not create into 
 
 ## 1. Locate
 
-- Get the workspace path and the repository folder. The folder must already be a git repository inside the workspace; `--path` is relative to the workspace.
+- Choose the workspace with [choose-workspace.md](../starter-workspace/references/choose-workspace.md), then get the repository folder.
+  The folder must already be a git repository inside the workspace; `--path` is relative to the workspace.
 - If the repository lives elsewhere or only on a remote, propose `git clone <url> <workspace>/<name>` or a move, and run it only after the user confirms.
-- If `workspace.json` exists, read it. A `registered` entry at the same path can be adopted again with `--install`; a `managed` entry is already done.
+- The `workspace list` output shows the workspace's repositories. A `registered` entry at the same path can be adopted again with `--install`; a `managed` entry is already done.
 
 ## 2. Choose the mode
 

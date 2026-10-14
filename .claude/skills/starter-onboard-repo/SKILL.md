@@ -9,7 +9,9 @@ Onboarding is defined inside the target repository, not here. This skill only se
 
 ## 1. Find the repository
 
-- Take the path from the user, or from the `managed` entries in the workspace's `workspace.json`. A `registered` entry has no harness: offer `starter-adopt-repo` with install first.
+- When the user gives a path, use it. Otherwise run `python3 tool/starter.py workspace list` and match the named repository against the `managed` entries
+  of the saved workspaces; ask only when the name matches more than one or none (then follow [choose-workspace.md](../starter-workspace/references/choose-workspace.md)).
+  A `registered` entry has no harness: offer `starter-adopt-repo` with install first.
 - Confirm that `<repo>/.ai/config.json` and `<repo>/.agents/skills/repo-onboard/SKILL.md` exist. If `onboarded` is already true, this is the skill's refresh mode; say so.
 - The repository lies outside this project, so file tools may ask for permission on each access. If that gets in the way, suggest that the user run `/add-dir <workspace>` once.
 

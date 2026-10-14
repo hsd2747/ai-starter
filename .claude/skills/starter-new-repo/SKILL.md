@@ -15,18 +15,26 @@ Run `git rev-parse --verify --quiet HEAD` and `git status --porcelain -- templat
 - Uncommitted changes under `template/` or `workspace-template/`: the record names a commit that does not contain them.
 
 In either case tell the user in one line and ask whether to continue (fine for a trial) or commit the starter first. Commit only when the user asks.
+When the starter is committed and clean, do not mention this check.
 
-## 2. Collect inputs
+## 2. Workspace
 
-Ask in one message for whatever the request did not give:
+Read [choose-workspace.md](../starter-workspace/references/choose-workspace.md) and follow it. Settle the workspace before asking about repositories.
 
-- **Workspace path**: outside this starter. If it already has `workspace.json`, read it and show the registered repositories.
-- **Per repository**: a folder name (letters, digits, `.`, `_`, `-`), a one-line role stating what it owns (for example `Backend API: auth, payments`),
-  and an optional remote URL. A remote only configures `origin`; nothing is pushed.
+## 3. Repositories
 
-Suggest names such as `be`, `web`, `app`, but never invent a role the user did not state. If the user actually wants to bring in an existing folder, switch to `starter-adopt-repo`.
+Use whatever the request or the skill arguments already give. Ask about the product, not about fields.
 
-## 3. Create
+1. When the request does not say what to build, ask one short question: which repositories are needed and what each owns, in the user's own words
+   (for example "a backend for auth and payments, and a web admin"). Skip names the workspace already registers.
+2. Propose a small table and ask for a yes or corrections:
+   - Per repository: a folder name derived from its role (`be`, `web`, `app`, `admin`, ...) and the role in one line, in the user's words.
+   - Remote: only if the user gave one. Otherwise say it can be added later with `git remote add origin <url>`.
+
+Do not list naming rules or field formats; the generator rejects invalid input without writing anything, and you relay that.
+Never invent a role the user did not state. If the user actually wants to bring in an existing folder, switch to `starter-adopt-repo`.
+
+## 4. Create
 
 State in one line which folders will be created, then run from this starter's root, once per repository:
 
@@ -37,7 +45,7 @@ python3 tool/starter.py new --workspace <path> --name <name> --role "<role>" [--
 The output is JSON. On `"ok": false` nothing was written: show the error and resolve it with the user.
 On success, report the repository path, `workspaceCreated` on the first run, and every entry in `warnings`.
 
-## 4. Next
+## 5. Next
 
 Nothing is committed in the workspace or in the repository. Offer the next steps:
 

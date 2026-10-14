@@ -7,6 +7,9 @@ description: Maintain a workspace's root files through conversation: repository 
 
 The workspace `AGENTS.md` is read only by sessions opened at the workspace root. CI and a teammate who clones a single repository never see it.
 
+First choose the workspace with [choose-workspace.md](references/choose-workspace.md). The saved list itself is managed with
+`python3 tool/starter.py workspace list | add --path <path> | remove --path <path>`; `remove` only forgets the entry.
+
 ## Roles
 
 - Roles and remotes live in `workspace.json`. Edit the entry there, then run `python3 tool/starter.py sync --workspace <path>` from this starter's root to rewrite the table.

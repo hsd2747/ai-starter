@@ -20,8 +20,9 @@ This repository is ai-starter, a generator. It is never onboarded and holds no p
   Nothing project-specific or language-specific goes into `template/`.
 - A change under `template/` or `workspace-template/` reaches every repository created afterwards. Before writing one,
   state in one line what generated repositories will see differently, then proceed.
-- The generator writes only inside the workspace it is given. It never writes into this starter, never overwrites an existing file,
-  and validates everything before its first write. `tests/` pins these rules; keep them passing.
+- The generator writes only inside the workspace it is given, plus the saved workspace list `~/.claude/ai-starter/workspaces.json`
+  that the starter skills read. It never writes into this starter, never overwrites an existing file, and validates everything before
+  its first write. `tests/` pins these rules and redirects the list with `AI_STARTER_REGISTRY`; keep them passing.
 - Generated repositories record the starter commit in `.ai/harness.json`. Commit starter changes before creating repositories that will be kept.
 - Commit and push only when the user asks. Never hardcode secrets, tokens, or connection strings.
 

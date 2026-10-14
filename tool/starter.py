@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ai-starter generator. Writes only into the workspace it is given; never into this starter."""
+"""ai-starter generator. Writes only into the workspace it is given and the saved workspace list; never into this starter."""
 
 from __future__ import annotations
 
@@ -29,6 +29,9 @@ SKIP_PATHS = {".ai/runs"}
 # Existing repositories usually have these already; harness lines are appended instead of reported as a conflict.
 MERGED_ON_ADOPT = {".gitignore", ".gitattributes"}
 
+# The starter skills read this list to find the user's workspaces. It is the one file written outside a workspace.
+REGISTRY_ENV = "AI_STARTER_REGISTRY"
+
 REPO_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 
 USAGE = """\
@@ -42,6 +45,9 @@ python3 tool/starter.py <command>
         A repository registered earlier without --install can be adopted again with --install.
   sync  --workspace PATH
         Rewrite the repository table in the workspace AGENTS.md from workspace.json, after editing roles or remotes there.
+  workspace list | add --path PATH | remove --path PATH
+        The saved workspace list (~/.claude/ai-starter/workspaces.json, or $AI_STARTER_REGISTRY), most recent first.
+        new, adopt, and sync record their workspace there. remove only forgets the entry; it never touches the folder.
 
 Output is JSON. Exit codes: 0 ok, 1 usage error or conflict.
 """
@@ -261,6 +267,46 @@ def _append_missing_lines(source: Path, dest: Path) -> bool:
     return True
 
 
+def registry_path() -> Path:
+    raw = os.environ.get(REGISTRY_ENV)
+    return Path(raw).expanduser() if raw else Path.home() / ".claude" / "ai-starter" / "workspaces.json"
+
+
+def _load_registry() -> dict:
+    path = registry_path()
+    if not path.is_file():
+        return {"schemaVersion": 1, "workspaces": []}
+    data = _read_json(path)
+    if not isinstance(data.get("workspaces"), list):
+        raise StarterError(f"{path} has unexpected content; fix or delete it.")
+    return data
+
+
+def remember_workspace(workspace: Path) -> list[str]:
+    """Moves the workspace to the top of the saved list. A failure is only a warning: the workspace itself is complete."""
+    try:
+        data = _load_registry()
+        entries = [w for w in data["workspaces"] if w.get("path") != str(workspace)]
+        data["workspaces"] = [{"path": str(workspace), "lastUsed": date.today().isoformat()}, *entries]
+        _write_json(registry_path(), data)
+    except (StarterError, OSError) as error:
+        return [f"The workspace was not saved to the workspace list: {error}"]
+    return []
+
+
+def _describe_workspace(entry: dict) -> dict:
+    path = Path(entry.get("path", ""))
+    info = {"path": str(path), "lastUsed": entry.get("lastUsed", ""), "exists": path.is_dir(), "initialized": False, "repos": []}
+    if (path / WORKSPACE_FILE).is_file():
+        try:
+            manifest = _read_json(path / WORKSPACE_FILE)
+            info["initialized"] = True
+            info["repos"] = [{k: r.get(k, "") for k in ("name", "path", "kind", "role")} for r in manifest.get("repos", [])]
+        except StarterError as error:
+            info["error"] = str(error)
+    return info
+
+
 def _base_branch() -> str:
     return _read_json(TEMPLATE / ".ai/config.json")["git"]["baseBranch"]
 
@@ -284,6 +330,7 @@ def cmd_new(args: argparse.Namespace) -> dict:
         _git(target, "remote", "add", "origin", args.remote)
     warnings = _version_warnings(version)
     warnings += register(workspace, {"name": args.name, "path": args.name, "role": args.role, "kind": "managed", "remote": args.remote})
+    warnings += remember_workspace(workspace)
     return {
         "ok": True,
         "workspace": str(workspace),
@@ -327,6 +374,7 @@ def cmd_adopt(args: argparse.Namespace) -> dict:
     role = args.role or (previous or {}).get("role", "")
     remote = args.remote or (previous or {}).get("remote", "")
     warnings += register(workspace, {"name": name, "path": relative, "role": role, "kind": kind, "remote": remote})
+    warnings += remember_workspace(workspace)
     report = {"ok": True, "workspace": str(workspace), "workspaceCreated": created, "repository": str(repo), "kind": kind, "warnings": warnings}
     if args.install:
         report["filesInstalled"] = len(files)
@@ -348,7 +396,28 @@ def cmd_sync(args: argparse.Namespace) -> dict:
     warning = sync_agents(workspace, manifest["repos"])
     if warning:
         raise StarterError(warning)
-    return {"ok": True, "workspace": str(workspace), "repos": [r["name"] for r in manifest["repos"]]}
+    return {"ok": True, "workspace": str(workspace), "repos": [r["name"] for r in manifest["repos"]], "warnings": remember_workspace(workspace)}
+
+
+def cmd_workspace(args: argparse.Namespace) -> dict:
+    if args.action == "list":
+        return {"ok": True, "registry": str(registry_path()), "workspaces": [_describe_workspace(w) for w in _load_registry()["workspaces"]]}
+    if not args.path:
+        raise StarterError(f"workspace {args.action} needs --path.")
+    if args.action == "add":
+        workspace = _resolve_workspace(args.path)
+        warnings = remember_workspace(workspace)
+        if warnings:
+            raise StarterError(warnings[0])
+        return {"ok": True, "registry": str(registry_path()), "workspace": _describe_workspace(_load_registry()["workspaces"][0])}
+    target = str(Path(args.path).expanduser().resolve())
+    data = _load_registry()
+    remaining = [w for w in data["workspaces"] if w.get("path") != target]
+    if len(remaining) == len(data["workspaces"]):
+        raise StarterError(f"{target} is not in the workspace list.")
+    data["workspaces"] = remaining
+    _write_json(registry_path(), data)
+    return {"ok": True, "registry": str(registry_path()), "removed": target, "note": "Only the list entry was removed; the folder is untouched."}
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -368,6 +437,9 @@ def _parser() -> argparse.ArgumentParser:
     adopt.add_argument("--install", action="store_true")
     sync = sub.add_parser("sync", add_help=False)
     sync.add_argument("--workspace", required=True)
+    workspace = sub.add_parser("workspace", add_help=False)
+    workspace.add_argument("action", choices=["list", "add", "remove"])
+    workspace.add_argument("--path", default="")
     return parser
 
 
@@ -381,7 +453,7 @@ def main(argv: list[str]) -> int:
         print(json.dumps({"ok": False, "error": f"Invalid arguments: {' '.join(argv)}", "usage": USAGE}, indent=2))
         return 1
     try:
-        report = {"new": cmd_new, "adopt": cmd_adopt, "sync": cmd_sync}[args.command](args)
+        report = {"new": cmd_new, "adopt": cmd_adopt, "sync": cmd_sync, "workspace": cmd_workspace}[args.command](args)
     except StarterError as error:
         print(json.dumps({"ok": False, "error": str(error)}, indent=2, ensure_ascii=False))
         return 1

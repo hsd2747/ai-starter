@@ -39,9 +39,22 @@ After editing roles or remotes in `workspace.json`, rewrite the table in the wor
 python3 tool/starter.py sync --workspace ~/work/my-product
 ```
 
+## Saved workspaces
+
+`new`, `adopt`, and `sync` save their workspace in `~/.claude/ai-starter/workspaces.json`, most recent first, so the skills below
+know where your workspaces are without asking each time.
+
+```bash
+python3 tool/starter.py workspace list                     # saved workspaces with their repositories
+python3 tool/starter.py workspace add --path ~/work/next    # save a path before its first repository
+python3 tool/starter.py workspace remove --path ~/work/old  # forget an entry; the folder is untouched
+```
+
 ## Through conversation
 
-Open an agent session in this starter and ask in plain words. Claude Code picks the matching skill from `.claude/skills/`:
+Open an agent session in this starter and ask in plain words. Claude Code picks the matching skill from `.claude/skills/`.
+Each skill starts from the saved workspace list; when it is empty, the skill explains what a workspace is and asks for its path first.
+
 
 | Skill | Ask for example | Does |
 | --- | --- | --- |

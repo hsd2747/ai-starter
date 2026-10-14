@@ -38,10 +38,17 @@ class StarterTest(unittest.TestCase):
     def setUp(self):
         self.base = Path(tempfile.mkdtemp(prefix="ai-starter-"))
         self.ws = self.base / "product"
+        self.registry = self.base / "home" / "workspaces.json"
+        self._saved_registry = os.environ.get(starter.REGISTRY_ENV)
+        os.environ[starter.REGISTRY_ENV] = str(self.registry)
         self.template_before = snapshot(starter.TEMPLATE)
         self.workspace_template_before = snapshot(starter.WORKSPACE_TEMPLATE)
 
     def tearDown(self):
+        if self._saved_registry is None:
+            os.environ.pop(starter.REGISTRY_ENV, None)
+        else:
+            os.environ[starter.REGISTRY_ENV] = self._saved_registry
         self.assertEqual(snapshot(starter.TEMPLATE), self.template_before, "the starter template must never change")
         self.assertEqual(snapshot(starter.WORKSPACE_TEMPLATE), self.workspace_template_before)
         shutil.rmtree(self.base, ignore_errors=True)
@@ -155,6 +162,35 @@ class StarterTest(unittest.TestCase):
         self.assertEqual(run("sync", "--workspace", str(self.ws))[0], 1)
         self.assertIn("Payments API", (self.ws / "AGENTS.md").read_text(encoding="utf-8"))
 
+    def test_workspace_list_records_use_and_forgets_without_touching_folders(self):
+        self.assertEqual(run("workspace", "list")[1]["workspaces"], [])
+        planned = self.base / "planned"
+        code, report = run("workspace", "add", "--path", str(planned))
+        self.assertEqual(code, 0, report)
+        self.assertFalse(report["workspace"]["exists"])
+        self.assertFalse(planned.exists())
+
+        self.assertEqual(run("new", "--workspace", str(self.ws), "--name", "be", "--role", "Backend API")[0], 0)
+        listed = run("workspace", "list")[1]["workspaces"]
+        self.assertEqual([w["path"] for w in listed], [str(self.ws.resolve()), str(planned.resolve())])
+        self.assertTrue(listed[0]["initialized"])
+        self.assertEqual(listed[0]["repos"], [{"name": "be", "path": "be", "kind": "managed", "role": "Backend API"}])
+
+        code, report = run("workspace", "remove", "--path", str(self.ws))
+        self.assertEqual(code, 0, report)
+        self.assertTrue((self.ws / "workspace.json").is_file())
+        self.assertEqual([w["path"] for w in run("workspace", "list")[1]["workspaces"]], [str(planned.resolve())])
+        self.assertEqual(run("workspace", "add", "--path", str(starter.STARTER / "nested"))[0], 1)
+
+    def test_unreadable_workspace_list_does_not_block_creation(self):
+        self.registry.parent.mkdir(parents=True)
+        self.registry.write_text("not json", encoding="utf-8")
+        code, report = run("new", "--workspace", str(self.ws), "--name", "be")
+        self.assertEqual(code, 0, report)
+        self.assertTrue(any("workspace list" in w for w in report["warnings"]))
+        self.assertEqual(self.registry.read_text(encoding="utf-8"), "not json")
+        self.assertEqual(run("workspace", "list")[0], 1)
+
     def test_workspace_inside_the_starter_is_rejected(self):
         code, report = run("new", "--workspace", str(starter.STARTER / "scratch-ws"), "--name", "be")
         self.assertEqual(code, 1)
@@ -180,6 +216,9 @@ class StarterSkillsTest(unittest.TestCase):
             self.assertRegex(header, r"\ndescription: \S", path)
             for referenced in set(re.findall(r"`(starter-[a-z-]+)`", text)):
                 self.assertIn(referenced, names, f"{path} names a missing skill")
+        for path in (starter.STARTER / ".claude/skills").glob("starter-*/**/*.md"):
+            for target in re.findall(r"\]\(([^)#:]+\.md)\)", path.read_text(encoding="utf-8")):
+                self.assertTrue((path.parent / target).is_file(), f"{path} links a missing {target}")
 
 
 if __name__ == "__main__":
