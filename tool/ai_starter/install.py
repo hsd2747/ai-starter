@@ -1,4 +1,4 @@
-"""Copying the harness into a new or adopted repository."""
+"""Copying the harness into a repository: a new one, or an existing one inside a workspace or not."""
 
 from __future__ import annotations
 
@@ -7,11 +7,62 @@ from datetime import date
 from pathlib import Path
 
 from . import paths
-from .files import Staging, file_hash, read_json
+from .files import Staging, file_hash, read_json, tree_files
 from .manifests import manifest_bytes
 from .merge import pattern_lines, with_lines
 from .paths import HARNESS_RECORD
 from .policy import Policy, policy_for
+
+
+# Instruction files and folders of other agent tools. The harness neither reads nor replaces them, so they are reported
+# before an install for a merge plan instead of being left to compete with the harness rules.
+OTHER_INSTRUCTIONS = ["AGENT.md", "CLAUDE.local.md", "GEMINI.md", ".cursorrules", ".windsurfrules", ".clinerules", ".roorules",
+                      ".github/copilot-instructions.md", ".claude/settings.local.json",
+                      ".cursor/rules", ".windsurf/rules", ".roo/rules", ".kiro/steering", ".github/instructions"]
+# Folders the harness installs into; anything else a repository keeps there is its own agent setup.
+HARNESS_DIRS = (".claude", ".agents", ".gemini")
+# A file moved out of the harness's way before an install, for example AGENTS.pre-harness.md, waits there to be merged.
+SET_ASIDE = ".pre-harness"
+
+
+def install_conflicts(repo: Path, files: list[str]) -> list[str]:
+    """Harness files that already exist in an existing repository, in any capitalization; installing over any of them is refused."""
+    conflicts = [f for f in files if policy_for(f, "adopt") is not Policy.APPEND_LINES and _exists_any_case(repo, f)]
+    if _exists_any_case(repo, HARNESS_RECORD):
+        conflicts.append(HARNESS_RECORD)
+    return conflicts
+
+
+def existing_instructions(repo: Path, files: list[str]) -> list[str]:
+    """Agent instructions in the repository that the harness did not ship: other tools' rule files, files set aside for a merge,
+    and the repository's own entries under the folders the harness installs into. A folder is listed once, with a trailing slash."""
+    found = {rel + "/" if (repo / rel).is_dir() else rel for rel in OTHER_INSTRUCTIONS if os.path.lexists(repo / rel)}
+    found.update(entry.name for entry in repo.iterdir() if SET_ASIDE in entry.name)
+    shipped = set(files)
+    for folder in HARNESS_DIRS:
+        if (repo / folder).is_dir() and not (repo / folder).is_symlink():
+            for rel in tree_files(repo / folder):
+                path = f"{folder}/{rel}"
+                if path not in shipped:
+                    parts = path.split("/")
+                    found.add("/".join(parts[:3]) + ("/" if len(parts) > 3 else ""))
+    return sorted(found)
+
+
+def _exists_any_case(root: Path, rel: str) -> bool:
+    """Whether `rel` exists under `root` in any capitalization, so that agents.md conflicts with AGENTS.md on every file system."""
+    current = root
+    for part in rel.split("/"):
+        if os.path.lexists(current / part):
+            current = current / part
+            continue
+        if not current.is_dir():
+            return False
+        match = next((name for name in os.listdir(current) if name.lower() == part.lower()), None)
+        if match is None:
+            return False
+        current = current / match
+    return True
 
 
 def install(repo: Path, files: list[str], mode: str, version: dict) -> list[str]:

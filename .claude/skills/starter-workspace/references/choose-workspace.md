@@ -1,6 +1,6 @@
 # Choose the workspace
 
-Every starter skill resolves its workspace this way before asking anything else.
+Every starter skill that works on a workspace resolves it this way before asking anything else. Harness work on a repository the user gave by path needs no workspace.
 
 Run from this starter's root:
 
@@ -9,7 +9,7 @@ python3 tool/starter.py workspace list
 ```
 
 It prints the saved workspace list (`~/.claude/ai-starter/workspaces.json`), most recent first. The generator adds a workspace there on every
-successful `new`, `adopt`, `sync`, or `workspace add`. Each entry says whether the folder `exists`, whether it is `initialized`
+successful `new`, `adopt`, `unregister`, `sync`, `upgrade`, or `workspace add`. Each entry says whether the folder `exists`, whether it is `initialized`
 (has `workspace.json`), and its repositories.
 
 | Situation | Do |

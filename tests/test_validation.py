@@ -11,14 +11,14 @@ class ValidationTest(WorkspaceCase):
     def test_invalid_workspace_manifest_stops_every_command_before_it_writes(self):
         self.assertEqual(run("new", "--workspace", str(self.ws), "--name", "be")[0], 0)
         manifest = self.manifest()
-        del manifest["repos"][0]["kind"]
+        del manifest["repos"][0]["path"]
         (self.ws / "workspace.json").write_text(json.dumps(manifest), encoding="utf-8")
         before = snapshot(self.ws)
         for command, *rest in (("new", "--name", "web"), ("sync",), ("upgrade", "--dry-run")):
             code, report = run(command, "--workspace", str(self.ws), *rest)
             self.assertEqual(code, 1, report)
             self.assertIn("workspace.schema.json", report["error"])
-            self.assertIn("'kind'", report["error"])
+            self.assertIn("'path'", report["error"])
         self.assertEqual(snapshot(self.ws), before)
         listed = run("workspace", "list")[1]["workspaces"][0]
         self.assertIn("workspace.schema.json", listed["error"])

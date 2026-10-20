@@ -31,6 +31,16 @@ def resolve_workspace(raw: str) -> Path:
     return workspace
 
 
+def resolve_repo(raw: str) -> Path:
+    """An existing git repository outside the starter, inside a workspace or not."""
+    repo = Path(raw).expanduser().resolve()
+    if repo == STARTER or STARTER in repo.parents:
+        raise StarterError(f"The repository must be outside the starter ({STARTER}).")
+    if not (repo / ".git").exists():
+        raise StarterError(f"{repo} is not a git repository.")
+    return repo
+
+
 def clean_relative(raw: str) -> str | None:
     parts = [p for p in raw.replace("\\", "/").split("/") if p not in ("", ".")]
     if raw.startswith("/") or not parts or ".." in parts:

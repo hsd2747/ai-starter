@@ -1,6 +1,6 @@
 ---
 name: starter-onboard-repo
-description: Onboard a repository that this starter created or adopted, without leaving this session, by following that repository's own repo-onboard skill and AGENTS.md. Use when the user asks to onboard a generated repository, or to set up or refresh its architecture and tooling (for example "be 온보딩해줘").
+description: Onboard a repository that has the starter harness, created here or installed later, in a workspace or not, without leaving this session, by following that repository's own repo-onboard skill and AGENTS.md. Use when the user asks to onboard a generated repository, or to set up or refresh its architecture and tooling (for example "be 온보딩해줘").
 ---
 
 # Onboard a generated repository
@@ -11,7 +11,9 @@ Onboarding is defined inside the target repository, not here. This skill only se
 
 - When the user gives a path, use it. Otherwise run `python3 tool/starter.py workspace list` and match the named repository against the `managed` entries
   of the saved workspaces; ask only when the name matches more than one or none (then follow [choose-workspace.md](../starter-workspace/references/choose-workspace.md)).
-  A `registered` entry has no harness: offer `starter-adopt-repo` with install first.
+  A `registered` entry has no harness: offer `starter-install-harness` first.
+- Run `python3 tool/starter.py harness status --repo <repo>` and keep its `existingInstructions`, with any dispositions the user approved at install;
+  the onboarding's existing-codebase reference merges them.
 - Confirm that `<repo>/.ai/config.json` and `<repo>/.agents/skills/repo-onboard/SKILL.md` exist. If `onboarded` is already true, this is the skill's refresh mode; say so.
 - The repository lies outside this project, so file tools may ask for permission on each access. If that gets in the way, suggest that the user run `/add-dir <workspace>` once.
 

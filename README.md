@@ -4,8 +4,13 @@ A generator for repositories that are developed together with AI coding agents. 
 rules, a verification CLI, and a wiki that accumulates knowledge task by task. Architecture and tooling are not baked in:
 the first agent session in a new repository interviews you, researches current practice for its stack, and writes the result after you approve it.
 
-Repositories live in a **workspace**: a folder that groups the repositories of one product (for example `be`, `web`, `app`)
-and describes their roles in one `AGENTS.md`. The starter itself is never modified by the generator.
+Two things are managed separately:
+
+- A **workspace** is a folder that groups the repositories of one product (for example `be`, `web`, `app`) and describes their roles
+  in one `AGENTS.md`. Workspace commands change only the workspace's own root files.
+- The **harness** is the set of starter files inside one repository. Harness commands work on that repository alone, whether or not a workspace lists it.
+
+`new`, `adopt --install`, and `upgrade` combine both. The starter itself is never modified by the generator.
 
 Requirements: git and Python 3.10 or newer.
 
@@ -20,31 +25,43 @@ The first call initializes the workspace. Each call copies `template/` into `<wo
 records the starter version in `.ai/harness.json`, and adds a row to the workspace table. Nothing is committed.
 Then open an agent session **in the new repository** and ask it to onboard the project; harness details are in `template/.ai/README.md`.
 
-## Bring in a repository that was not created here
+## Manage a workspace
 
 ```bash
-python3 tool/starter.py adopt --workspace ~/work/my-product --path admin --role "Legacy admin web"
-python3 tool/starter.py adopt --workspace ~/work/my-product --path admin --install
+python3 tool/starter.py adopt --workspace ~/work/my-product --path admin --role "Legacy admin web"   # list an existing repository
+python3 tool/starter.py adopt --workspace ~/work/my-product --path admin --install                   # list it and install the harness
+python3 tool/starter.py unregister --workspace ~/work/my-product --name admin                        # take it out of the list
+python3 tool/starter.py sync --workspace ~/work/my-product                                           # rewrite the table
 ```
 
-Without `--install` the repository is only **registered**: listed with its role, and no file in it is touched.
-With `--install` the harness is copied in. Any existing harness file (`AGENTS.md`, `CLAUDE.md`, `.claude/settings.json`, ...)
-stops the command before it writes anything; only `.gitignore` and `.gitattributes` are merged by appending missing lines.
-The folder must already be a git repository inside the workspace.
-A repository registered without `--install` can get the harness later with the second command; its role is kept.
+`adopt` lists a folder that is already a git repository inside the workspace; without `--install` no file in it is touched.
+`unregister` removes the entry and its table row; the folder and every file in it, an installed harness included, stay as they are.
+Run `sync` after editing roles or remotes in `workspace.json`, or after installing the harness in a listed repository.
 
-After editing roles or remotes in `workspace.json`, rewrite the table in the workspace `AGENTS.md`:
+`workspace.json` holds names, paths, roles, and remotes only. The table's Harness column is read from each repository:
+**managed** when it has `.ai/harness.json`, **registered** otherwise.
+
+## Manage the harness in one repository
 
 ```bash
-python3 tool/starter.py sync --workspace ~/work/my-product
+python3 tool/starter.py harness status  --repo ~/work/my-product/admin             # installed? which starter commit?
+python3 tool/starter.py harness install --repo ~/work/my-product/admin             # copy the harness in
+python3 tool/starter.py harness upgrade --repo ~/work/my-product/admin --dry-run   # plan an upgrade, then run it without --dry-run
 ```
+
+The repository can be anywhere outside this starter; nothing outside it is written. `install` stops before it writes anything when
+any harness file (`AGENTS.md`, `CLAUDE.md`, `.claude/settings.json`, ...) already exists; only `.gitignore` and `.gitattributes`
+are merged by appending missing lines. `harness status` lists those files under `conflicts` before an install, and lists other agent
+instructions the harness would leave in place (`.cursorrules`, `.github/copilot-instructions.md`, the repository's own `.claude/` entries, ...)
+under `existingInstructions`; the `starter-install-harness` skill proposes how to merge each one before it installs.
 
 ## Bring starter changes into existing repositories
 
 ```bash
 python3 tool/starter.py upgrade --workspace ~/work/my-product --dry-run   # plan for the workspace root and every managed repository
 python3 tool/starter.py upgrade --workspace ~/work/my-product             # apply
-python3 tool/starter.py upgrade --workspace ~/work/my-product --name be   # one repository only
+python3 tool/starter.py upgrade --workspace ~/work/my-product --name be   # one listed repository only
+python3 tool/starter.py harness upgrade --repo ~/work/solo                # a repository no workspace lists
 ```
 
 Each target recorded the starter commit it came from (`.ai/harness.json`, or `workspace.json` for the workspace root). For every harness file,
@@ -70,7 +87,7 @@ In the rare case that moving in stops partway, the error lists the files already
 
 ## Saved workspaces
 
-`new`, `adopt`, and `sync` save their workspace in `~/.claude/ai-starter/workspaces.json`, most recent first, so the skills below
+`new`, `adopt`, `unregister`, `sync`, and `upgrade` save their workspace in `~/.claude/ai-starter/workspaces.json`, most recent first, so the skills below
 know where your workspaces are without asking each time.
 
 ```bash
@@ -89,9 +106,11 @@ Each skill starts from the saved workspace list; when it is empty, the skill exp
 | --- | --- | --- |
 | `starter-new-repo` | "Create be and web in ~/work/my-product" | Checks the starter commit, collects names and roles, runs `new` |
 | `starter-onboard-repo` | "Onboard be" | Runs the repository's own `repo-onboard` under its `AGENTS.md`, from this session |
-| `starter-adopt-repo` | "Add the existing admin repository" | Chooses register or install, runs `adopt` |
+| `starter-adopt-repo` | "Add the existing admin repository" | Lists it with its role, optionally with the harness, runs `adopt` |
+| `starter-install-harness` | "Install the harness in admin" | Checks `harness status` and the worktree, runs `harness install` |
+| `starter-unregister-repo` | "Take admin out of my-product" | Shows what stays and which contracts name it, runs `unregister` |
 | `starter-workspace` | "Record the contracts between be and app" | Edits roles and the contracts section, proposes per-repository rules |
-| `starter-upgrade` | "Bring the latest starter into my-product" | Shows the dry run, runs `upgrade`, helps resolve conflicts, runs `verify` |
+| `starter-upgrade` | "Bring the latest starter into my-product" | Shows the dry run, runs `upgrade` or `harness upgrade`, helps resolve conflicts, runs `verify` |
 
 Onboarding from this session does not load the repository's own hook and permission settings. For daily work, open a session in the repository itself.
 

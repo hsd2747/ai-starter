@@ -1,4 +1,4 @@
-"""`upgrade`: bring starter changes into a workspace root and its managed repositories.
+"""`upgrade` and `harness upgrade`: bring starter changes into a workspace root and its managed repositories, or into one repository.
 
 Every target is planned without writing; only when no target has a blocker are all writes staged and moved in together.
 """
@@ -17,10 +17,10 @@ from .files import Staging, file_hash, tree_files
 from .gitutil import git_ok, starter_version
 from .manifests import load_manifest, manifest_bytes, manifest_errors
 from .merge import merge_file
-from .paths import GUARD_DIR, HARNESS_RECORD, WORKSPACE_FILE, StarterError, resolve_workspace
+from .paths import GUARD_DIR, HARNESS_RECORD, WORKSPACE_FILE, StarterError, resolve_repo, resolve_workspace
 from .policy import policy_for
 from .registry import remember_workspace
-from .workspace import guard_files, load_workspace
+from .workspace import guard_files, load_workspace, repo_kind
 
 
 @dataclass(frozen=True)
@@ -227,9 +227,8 @@ def _attach_plan(target: Target, plan: Plan) -> None:
         target.blockers.append(f"commit or stash these first so the upgrade arrives as its own reviewable change: {dirty}")
 
 
-def _plan_repository(workspace: Path, repo: dict, version: dict, listings: dict) -> Target:
-    root = workspace / repo["path"]
-    target = Target(repo["name"], root, root / HARNESS_RECORD, "harness")
+def _plan_repository(name: str, root: Path, version: dict, listings: dict) -> Target:
+    target = Target(name, root, root / HARNESS_RECORD, "harness")
     if not target.record_path.is_file():
         target.blockers.append(f"{HARNESS_RECORD} is missing")
         return target
@@ -244,7 +243,7 @@ def _plan_repository(workspace: Path, repo: dict, version: dict, listings: dict)
     if record["starter"]["dirty"]:
         target.warning = "it was installed from a starter with uncommitted template changes; review the merged files closely"
     sources = {rel: f"template/{rel}" for rel in tree_files(paths.TEMPLATE)}
-    plan = plan_upgrade(root, repo["name"], record["mode"], set(record["files"]), sources, lambda rel: f"template/{rel}",
+    plan = plan_upgrade(root, name, record["mode"], set(record["files"]), sources, lambda rel: f"template/{rel}",
                         _listing(listings, target.commit))
     _attach_plan(target, plan)
     target.record = {**record, "starter": version, "upgradedAt": date.today().isoformat(),
@@ -266,26 +265,48 @@ def _plan_workspace(workspace: Path, manifest: dict, version: dict, listings: di
 
 
 def run(workspace_path: str, names: list[str], dry_run: bool) -> dict:
-    """Upgrades the workspace root and every managed repository, or only the repositories in `names`."""
+    """Upgrades the workspace root and every repository in it that has the harness, or only the repositories in `names`."""
     workspace = resolve_workspace(workspace_path)
     manifest = load_workspace(workspace)
     if manifest is None:
         raise StarterError(f"{workspace} has no {WORKSPACE_FILE}.")
-    version = starter_version()
-    if version["commit"] is None or version["dirty"]:
-        raise StarterError("Commit the starter first: an upgrade records the starter commit as the base of the next one, "
-                           "so template/ and workspace-template/ must match it.")
+    version = _committed_starter()
     repos = {r["name"]: r for r in manifest["repos"]}
     for name in names:
         if name not in repos:
             raise StarterError(f"The workspace does not register {name!r}.")
-        if repos[name]["kind"] != "managed":
-            raise StarterError(f"{name!r} is registered without the harness; install it with `adopt --install` instead.")
+        if repo_kind(workspace, repos[name]) != "managed":
+            raise StarterError(f"{name!r} has no harness; install it with `harness install --repo {workspace / repos[name]['path']}` first.")
 
     listings: dict = {}
     targets = [_plan_workspace(workspace, manifest, version, listings)] if not names else []
-    chosen = names or [r["name"] for r in manifest["repos"] if r["kind"] == "managed"]
-    targets += [_plan_repository(workspace, repos[name], version, listings) for name in chosen]
+    chosen = names or [r["name"] for r in manifest["repos"] if repo_kind(workspace, r) == "managed"]
+    targets += [_plan_repository(name, workspace / repos[name]["path"], version, listings) for name in chosen]
+    result = _apply(targets, version, dry_run)
+    if not dry_run:
+        result["warnings"] += remember_workspace(workspace)
+    return result
+
+
+def run_repository(repo_path: str, dry_run: bool) -> dict:
+    """Upgrades one repository's harness, whether or not a workspace lists it. Nothing outside the repository is written."""
+    repo = resolve_repo(repo_path)
+    if not (repo / HARNESS_RECORD).is_file():
+        raise StarterError(f"{repo} has no {HARNESS_RECORD}; install the harness with `harness install --repo {repo}` first.")
+    version = _committed_starter()
+    return _apply([_plan_repository(repo.name, repo, version, {})], version, dry_run)
+
+
+def _committed_starter() -> dict:
+    version = starter_version()
+    if version["commit"] is None or version["dirty"]:
+        raise StarterError("Commit the starter first: an upgrade records the starter commit as the base of the next one, "
+                           "so template/ and workspace-template/ must match it.")
+    return version
+
+
+def _apply(targets: list[Target], version: dict, dry_run: bool) -> dict:
+    """Writes every planned target together, or nothing when any target has a blocker."""
     for target in targets:
         if target.record is not None:
             target.blockers += [f"the updated {target.record_path.name} would be invalid: {error}"
@@ -303,7 +324,6 @@ def run(workspace_path: str, names: list[str], dry_run: bool) -> dict:
     result = {"ok": True, "dryRun": dry_run, "starter": version, "targets": [t.report() for t in targets],
               "warnings": [f"{t.name}: {t.warning}" for t in targets if t.warning]}
     if not dry_run:
-        result["warnings"] += remember_workspace(workspace)
         planned = [t for t in targets if t.plan is not None]
         conflicts = [f"{t.root}/{rel}" for t in planned for rel in t.plan.conflicts]
         kept = [f"{t.root}/{entry['path']}" for t in planned for entry in t.plan.kept]

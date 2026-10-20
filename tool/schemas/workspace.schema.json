@@ -22,13 +22,13 @@
     },
     "repo": {
       "type": "object",
-      "required": ["name", "path", "kind"],
+      "required": ["name", "path"],
       "additionalProperties": false,
       "properties": {
         "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
         "path": { "type": "string", "minLength": 1 },
         "role": { "type": "string" },
-        "kind": { "enum": ["managed", "registered"] },
+        "kind": { "enum": ["managed", "registered"], "description": "Written by older versions and ignored: the repository's .ai/harness.json decides." },
         "remote": { "type": "string" }
       }
     }

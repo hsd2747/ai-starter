@@ -26,7 +26,7 @@ class NewTest(WorkspaceCase):
         self.assertTrue((self.ws / ".git").is_dir())
         self.assertTrue((repo / ".claude/skills/repo-change/SKILL.md").is_file())
 
-        self.assertEqual(self.manifest()["repos"], [{"name": "be", "path": "be", "role": "Backend API", "kind": "managed", "remote": ""}])
+        self.assertEqual(self.manifest()["repos"], [{"name": "be", "path": "be", "role": "Backend API", "remote": ""}])
         agents = (self.ws / "AGENTS.md").read_text(encoding="utf-8")
         self.assertIn("| be | `be/` | Backend API | managed | - |", agents)
 

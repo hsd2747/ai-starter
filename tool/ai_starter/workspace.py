@@ -10,7 +10,7 @@ from . import paths
 from .files import Staging, tree_files, write_atomic
 from .gitutil import init_repo
 from .manifests import load_manifest, manifest_bytes
-from .paths import GUARD_DIR, WORKSPACE_FILE, StarterError
+from .paths import GUARD_DIR, HARNESS_RECORD, WORKSPACE_FILE, StarterError
 
 REPOS_START = "<!-- workspace:repos:start -->"
 REPOS_END = "<!-- workspace:repos:end -->"
@@ -18,8 +18,18 @@ REPO_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 
 
 def load_workspace(workspace: Path) -> dict | None:
+    """workspace.json without the `kind` that older versions stored: whether a repository has the harness is read from the repository."""
     path = workspace / WORKSPACE_FILE
-    return load_manifest(path, "workspace") if path.is_file() else None
+    if not path.is_file():
+        return None
+    manifest = load_manifest(path, "workspace")
+    for repo in manifest["repos"]:
+        repo.pop("kind", None)
+    return manifest
+
+
+def repo_kind(workspace: Path, repo: dict) -> str:
+    return "managed" if (workspace / repo["path"] / HARNESS_RECORD).is_file() else "registered"
 
 
 def check_new_entry(manifest: dict | None, name: str, path: str) -> None:
@@ -70,12 +80,12 @@ def _cell(value: str) -> str:
     return value.replace("|", "\\|").replace("\n", " ").strip() or "-"
 
 
-def render_repos(repos: list[dict]) -> str:
+def render_repos(workspace: Path, repos: list[dict]) -> str:
     if not repos:
         return "No repositories yet."
     rows = ["| Repository | Path | Role | Harness | Remote |", "| --- | --- | --- | --- | --- |"]
     for repo in repos:
-        rows.append(f"| {_cell(repo['name'])} | `{repo['path']}/` | {_cell(repo.get('role', ''))} | {repo['kind']} | {_cell(repo.get('remote', ''))} |")
+        rows.append(f"| {_cell(repo['name'])} | `{repo['path']}/` | {_cell(repo.get('role', ''))} | {repo_kind(workspace, repo)} | {_cell(repo.get('remote', ''))} |")
     return "\n".join(rows)
 
 
@@ -86,7 +96,7 @@ def _agents_with_table(workspace: Path, repos: list[dict]) -> tuple[bytes | None
     start, end = text.find(REPOS_START), text.find(REPOS_END)
     if start == -1 or end < start:
         return None, f"{path}: repository markers are missing; the table was not updated. Restore {REPOS_START} and {REPOS_END}."
-    body = f"{REPOS_START}\n{render_repos(repos)}\n"
+    body = f"{REPOS_START}\n{render_repos(workspace, repos)}\n"
     return (text[:start] + body + text[end:]).encode("utf-8"), None
 
 
@@ -98,20 +108,37 @@ def sync_agents(workspace: Path, repos: list[dict]) -> str | None:
     return warning
 
 
-def registered_only(manifest: dict | None, path: str) -> dict | None:
-    return next((r for r in (manifest or {}).get("repos", []) if r["path"] == path and r["kind"] == "registered"), None)
+def entry_at(manifest: dict | None, path: str) -> dict | None:
+    return next((r for r in (manifest or {}).get("repos", []) if r["path"] == path), None)
 
 
 def register(workspace: Path, entry: dict) -> list[str]:
     """Adds the entry, or replaces the one at the same path when a registered repository gets the harness."""
-    manifest = load_manifest(workspace / WORKSPACE_FILE, "workspace")
+    manifest = load_workspace(workspace)
     repos = manifest["repos"]
     index = next((i for i, r in enumerate(repos) if r["path"] == entry["path"]), None)
     if index is None:
         repos.append(entry)
     else:
         repos[index] = entry
-    agents, warning = _agents_with_table(workspace, repos)
+    return _save_repos(workspace, manifest)
+
+
+def unregister(workspace: Path, name: str) -> tuple[dict, list[str]]:
+    """Removes the named entry from workspace.json and the table. The repository folder is never touched."""
+    manifest = load_workspace(workspace)
+    repos = manifest["repos"]
+    entry = next((r for r in repos if r["name"] == name), None)
+    if entry is None:
+        known = [r["name"] for r in repos]
+        raise StarterError(f"The workspace has no repository named {name!r}; registered: {known}.")
+    repos.remove(entry)
+    return entry, _save_repos(workspace, manifest)
+
+
+def _save_repos(workspace: Path, manifest: dict) -> list[str]:
+    """Writes workspace.json and the table together; missing table markers only cost a warning."""
+    agents, warning = _agents_with_table(workspace, manifest["repos"])
     with Staging() as stage:
         stage.write(workspace / WORKSPACE_FILE, manifest_bytes(workspace / WORKSPACE_FILE, "workspace", manifest))
         if agents is not None:

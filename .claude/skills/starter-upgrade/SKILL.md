@@ -1,6 +1,6 @@
 ---
 name: starter-upgrade
-description: Bring starter changes into a workspace root and the managed repositories in it by running tool/starter.py upgrade, which merges each harness file three ways against the starter commit the target recorded. Use when the user asks to upgrade, update, or sync existing repositories or a workspace with the latest starter or harness (for example "기존 레포들 하네스 최신으로 올려줘", "be에 스타터 변경 반영해줘").
+description: Bring starter changes into a workspace root and the managed repositories in it, or into one repository with the harness whether or not a workspace lists it, by running tool/starter.py upgrade or harness upgrade, which merge each harness file three ways against the starter commit the target recorded. Use when the user asks to upgrade, update, or sync existing repositories or a workspace with the latest starter or harness (for example "기존 레포들 하네스 최신으로 올려줘", "be에 스타터 변경 반영해줘").
 ---
 
 # Upgrade
@@ -9,16 +9,18 @@ The generator plans and merges by itself and writes nothing when a check fails. 
 
 ## 1. Locate
 
-- Choose the workspace with [choose-workspace.md](../starter-workspace/references/choose-workspace.md).
-- Without a named repository, the upgrade covers the workspace root and every `managed` repository. A `registered` repository has no harness;
-  offer `starter-adopt-repo` with install instead.
+- One repository given by path, or one that no workspace lists: use `harness upgrade --repo <path>`. It needs no workspace and writes only inside the repository.
+- Otherwise choose the workspace with [choose-workspace.md](../starter-workspace/references/choose-workspace.md) and use `upgrade --workspace`.
+  Without a named repository it covers the workspace root and every listed `managed` repository; with `--name` only those repositories.
+- A `registered` repository has no harness; offer `starter-install-harness` instead.
 
 ## 2. Plan
 
-Run from this starter's root:
+Run from this starter's root, one of:
 
 ```bash
 python3 tool/starter.py upgrade --workspace <path> [--name <name> ...] --dry-run
+python3 tool/starter.py harness upgrade --repo <path> --dry-run
 ```
 
 - `"ok": false` about the starter: it has uncommitted changes under `template/` or `workspace-template/`, or no commit. Tell the user;

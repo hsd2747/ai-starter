@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .manifests import load_manifest, write_manifest
 from .paths import WORKSPACE_FILE, StarterError
+from .workspace import load_workspace, repo_kind
 
 # The starter skills read this list to find the user's workspaces. It is the one file written outside a workspace.
 REGISTRY_ENV = "AI_STARTER_REGISTRY"
@@ -42,9 +43,9 @@ def describe_workspace(entry: dict) -> dict:
     info = {"path": str(path), "lastUsed": entry["lastUsed"], "exists": path.is_dir(), "initialized": False, "repos": []}
     if (path / WORKSPACE_FILE).is_file():
         try:
-            manifest = load_manifest(path / WORKSPACE_FILE, "workspace")
+            manifest = load_workspace(path)
             info["initialized"] = True
-            info["repos"] = [{k: r.get(k, "") for k in ("name", "path", "kind", "role")} for r in manifest["repos"]]
+            info["repos"] = [{"name": r["name"], "path": r["path"], "kind": repo_kind(path, r), "role": r.get("role", "")} for r in manifest["repos"]]
         except StarterError as error:
             info["error"] = str(error)
     return info

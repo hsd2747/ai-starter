@@ -14,7 +14,8 @@ class AdoptTest(WorkspaceCase):
         code, report = run("adopt", "--workspace", str(self.ws), "--path", "legacy", "--role", "Admin web")
         self.assertEqual(code, 0, report)
         self.assertEqual(snapshot(repo), before)
-        self.assertEqual(self.manifest()["repos"][0]["kind"], "registered")
+        self.assertEqual(report["kind"], "registered")
+        self.assertIn("| legacy | `legacy/` | Admin web | registered | - |", (self.ws / "AGENTS.md").read_text(encoding="utf-8"))
 
     def test_adopt_install_stops_on_any_existing_harness_file(self):
         repo = git_repo(self.ws / "legacy")
@@ -43,7 +44,7 @@ class AdoptTest(WorkspaceCase):
         code, report = run("adopt", "--workspace", str(self.ws), "--path", "legacy", "--install")
         self.assertEqual(code, 0, report)
         self.assertTrue((repo / ".ai/harness.json").is_file())
-        self.assertEqual(self.manifest()["repos"], [{"name": "legacy", "path": "legacy", "role": "Admin web", "kind": "managed", "remote": ""}])
+        self.assertEqual(self.manifest()["repos"], [{"name": "legacy", "path": "legacy", "role": "Admin web", "remote": ""}])
         self.assertEqual(run("adopt", "--workspace", str(self.ws), "--path", "legacy", "--install")[0], 1)
 
 

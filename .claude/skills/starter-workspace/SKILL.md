@@ -12,10 +12,11 @@ First choose the workspace with [choose-workspace.md](references/choose-workspac
 
 ## Roles
 
-- Roles and remotes live in `workspace.json`. Edit the entry there, then run `python3 tool/starter.py sync --workspace <path>` from this starter's root to rewrite the table.
+- Roles and remotes live in `workspace.json`; whether a repository has the harness does not, because the table reads it from each repository's `.ai/harness.json`.
+  Edit the entry in `workspace.json`, then run `python3 tool/starter.py sync --workspace <path>` from this starter's root to rewrite the table.
   Never edit between the `workspace:repos` markers by hand.
-- Turning a registered repository into a managed one goes through `starter-adopt-repo` with install, not through an edit.
-- Removing an entry only unlists the repository. Never delete its folder.
+- Turning a registered repository into a managed one goes through `starter-install-harness`, then `sync`, not through an edit.
+- Taking a repository out of the workspace goes through `starter-unregister-repo`, not through an edit. It only unlists the repository; never delete its folder.
 
 ## Contracts
 
