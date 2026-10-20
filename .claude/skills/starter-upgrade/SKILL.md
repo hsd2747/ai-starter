@@ -23,7 +23,7 @@ python3 tool/starter.py upgrade --workspace <path> [--name <name> ...] --dry-run
 
 - `"ok": false` about the starter: it has uncommitted changes under `template/` or `workspace-template/`, or no commit. Tell the user;
   commit only when they ask.
-- Per target, summarize `updated`, `merged`, `added`, `conflicts`, `skipped` with reasons, and `removedUpstream`. Say `upToDate` targets in one line.
+- Per target, summarize `updated`, `merged`, `added`, `conflicts`, `kept`, `skipped` with reasons, and `removedUpstream`. Say `upToDate` targets in one line.
 - `blockers` list files that are uncommitted in a target. Show them and recommend committing or stashing in that repository first, so the
   upgrade arrives as its own reviewable change. Do neither yourself unless the user asks.
 
@@ -37,6 +37,10 @@ A conflict means a repository and the starter changed the same lines. Resolving 
 
 - Read `<repo>/AGENTS.md` and follow it. Harness files such as `AGENTS.md` and `.ai/config.json` are L2 there.
 - Propose a resolution per conflict that keeps the project's decisions and the starter's intent, and write it after approval.
+- A conflict that has `project:` or `workspace:` markers on the starter side usually means the target filled that section before the
+  starter marked it. Resolve it by moving the target's text between the markers and dropping the placeholder; later upgrades then keep it.
+- `kept` lists JSON keys that both the target and the starter changed; the target's value stayed and the file is valid JSON. Show the
+  starter's value from `template/<path>` in this starter and ask whether to adopt it.
 - `removedUpstream` files are no longer shipped by the starter. Deleting them is the user's decision; never delete them yourself.
 - `skipped` files were not touched. Explain each reason and offer to merge it by hand.
 

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ai-starter/harness.schema.json",
+  "title": "Starter version record of a managed repository (.ai/harness.json)",
+  "type": "object",
+  "required": ["schemaVersion", "starter", "mode", "installedAt", "files"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "starter": {
+      "type": "object",
+      "required": ["commit", "dirty"],
+      "additionalProperties": false,
+      "properties": {
+        "commit": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$" },
+        "dirty": { "type": "boolean" }
+      }
+    },
+    "mode": { "enum": ["new", "adopt"] },
+    "installedAt": { "type": "string", "format": "date" },
+    "upgradedAt": { "type": "string", "format": "date" },
+    "files": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+    }
+  }
+}

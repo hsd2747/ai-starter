@@ -32,7 +32,8 @@ in `.ai/config.json`, the repository map in `AGENTS.md`, the first architecture 
 
 `.ai/harness.json` records the starter commit and a hash of every file it installed. Keep it: `python3 tool/starter.py upgrade`, run in the starter,
 uses that commit as the base of a 3-way merge per harness file, so both your edits and the starter's arrive. It writes only harness files that are
-committed and unmodified, and leaves conflict markers where both sides changed the same lines.
+committed and unmodified, and leaves conflict markers where both sides changed the same lines. Text between `project:<name>` markers
+is yours: the merge keeps it as it is. JSON files merge by key, and where both sides changed a key your value stays.
 
 ## CLI
 

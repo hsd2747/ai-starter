@@ -12,12 +12,19 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import traceback
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
+
+# Manifests are checked with the harness's own dependency-free validator, so both read the same JSON Schema subset.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "template" / "tool"))
+from ai_harness.schema import validate  # noqa: E402
 
 STARTER = Path(__file__).resolve().parents[1]
 TEMPLATE = STARTER / "template"
 WORKSPACE_TEMPLATE = STARTER / "workspace-template"
+SCHEMAS = Path(__file__).resolve().parent / "schemas"
 
 WORKSPACE_FILE = "workspace.json"
 HARNESS_RECORD = ".ai/harness.json"
@@ -29,6 +36,13 @@ SKIP_NAMES = {"__pycache__", ".DS_Store"}
 SKIP_PATHS = {".ai/runs"}
 # Existing repositories usually have these already; harness lines are appended instead of reported as a conflict.
 MERGED_ON_ADOPT = {".gitignore", ".gitattributes"}
+# Seeds: installed once, then written by the repository. upgrade replaces only an untouched copy and never merges into one.
+PROJECT_OWNED = {"wiki/index.md", "wiki/log.md"}
+# Lines between a pair of these markers belong to the target, in any harness file. upgrade merges only the text around them.
+_BLOCK_MARKER = re.compile(r"[ \t]*(?:<!--|#)[ \t]*((?:project|workspace):[a-z0-9-]+):(start|end)[ \t]*(?:-->)?[ \t]*\Z")
+# (harness file, schemaVersion N) -> function that returns the content at N + 1. A template change that raises a schemaVersion
+# adds its steps here; without them upgrade skips the file instead of mixing two versions of its shape.
+MIGRATIONS: dict[tuple[str, int], Callable[[dict], dict]] = {}
 
 # The starter skills read this list to find the user's workspaces. It is the one file written outside a workspace.
 REGISTRY_ENV = "AI_STARTER_REGISTRY"
@@ -54,7 +68,8 @@ python3 tool/starter.py <command>
         The saved workspace list (~/.claude/ai-starter/workspaces.json, or $AI_STARTER_REGISTRY), most recent first.
         new, adopt, and sync record their workspace there. remove only forgets the entry; it never touches the folder.
 
-Output is JSON. Exit codes: 0 ok, 1 usage error or conflict.
+Output is JSON. Exit codes: 0 ok, 1 usage error, conflict, or invalid manifest,
+2 unexpected error (a starter bug; the report carries the traceback).
 """
 
 
@@ -149,16 +164,54 @@ def _resolve_workspace(raw: str) -> Path:
     return workspace
 
 
-def _relative_path(raw: str) -> str:
+def _clean_relative(raw: str) -> str | None:
     parts = [p for p in raw.replace("\\", "/").split("/") if p not in ("", ".")]
     if raw.startswith("/") or not parts or ".." in parts:
-        raise StarterError(f"--path must be a folder inside the workspace, relative to it: {raw!r}")
+        return None
     return "/".join(parts)
+
+
+def _relative_path(raw: str) -> str:
+    clean = _clean_relative(raw)
+    if clean is None:
+        raise StarterError(f"--path must be a folder inside the workspace, relative to it: {raw!r}")
+    return clean
+
+
+def manifest_errors(kind: str, value) -> list[str]:
+    """Problems in a file the starter keeps state in: its schema in tool/schemas/, then the rules a schema cannot state."""
+    errors = validate(json.loads((SCHEMAS / f"{kind}.schema.json").read_text(encoding="utf-8")), value)
+    if errors:
+        return errors
+    if kind == "workspace":
+        for field in ("name", "path"):
+            values = [repo[field] for repo in value["repos"]]
+            errors += [f"$.repos: {field} {v!r} appears more than once" for v in sorted(set(values)) if values.count(v) > 1]
+        errors += [f"$.repos: {repo['path']!r} is not a clean folder path inside the workspace"
+                   for repo in value["repos"] if _clean_relative(repo["path"]) != repo["path"]]
+    elif kind == "harness":
+        errors += [f"$.files: {rel!r} is not a clean path inside the repository" for rel in value["files"] if _clean_relative(rel) != rel]
+    return errors
+
+
+def _load_manifest(path: Path, kind: str) -> dict:
+    value = _read_json(path)
+    errors = manifest_errors(kind, value)
+    if errors:
+        raise StarterError(f"{path} does not match tool/schemas/{kind}.schema.json; fix it by hand: " + "; ".join(errors))
+    return value
+
+
+def _write_manifest(path: Path, kind: str, value: dict) -> None:
+    errors = manifest_errors(kind, value)
+    if errors:
+        raise StarterError(f"Refusing to write an invalid {path}: " + "; ".join(errors))
+    _write_json(path, value)
 
 
 def _load_workspace(workspace: Path) -> dict | None:
     path = workspace / WORKSPACE_FILE
-    return _read_json(path) if path.is_file() else None
+    return _load_manifest(path, "workspace") if path.is_file() else None
 
 
 def _check_new_entry(manifest: dict | None, name: str, path: str) -> None:
@@ -193,7 +246,7 @@ def ensure_workspace(workspace: Path, version: dict) -> list[str]:
     for relative in guard_files:
         _copy(TEMPLATE / "tool", relative, workspace / GUARD_DIR)
     created.append(GUARD_DIR + "/")
-    _write_json(workspace / WORKSPACE_FILE, {"schemaVersion": 1, "starter": version, "repos": []})
+    _write_manifest(workspace / WORKSPACE_FILE, "workspace", {"schemaVersion": 1, "starter": version, "repos": []})
     created.append(WORKSPACE_FILE)
     _init_repo(workspace, "main")
     return created
@@ -230,14 +283,14 @@ def _registered_only(manifest: dict | None, path: str) -> dict | None:
 
 def register(workspace: Path, entry: dict) -> list[str]:
     """Adds the entry, or replaces the one at the same path when a registered repository gets the harness."""
-    manifest = _read_json(workspace / WORKSPACE_FILE)
+    manifest = _load_manifest(workspace / WORKSPACE_FILE, "workspace")
     repos = manifest["repos"]
     index = next((i for i, r in enumerate(repos) if r["path"] == entry["path"]), None)
     if index is None:
         repos.append(entry)
     else:
         repos[index] = entry
-    _write_json(workspace / WORKSPACE_FILE, manifest)
+    _write_manifest(workspace / WORKSPACE_FILE, "workspace", manifest)
     warning = sync_agents(workspace, manifest["repos"])
     return [warning] if warning else []
 
@@ -250,7 +303,7 @@ def install(repo: Path, files: list[str], mode: str, version: dict) -> list[str]
                 merged.append(relative)
             continue
         _copy(TEMPLATE, relative, repo)
-    _write_json(repo / HARNESS_RECORD, {
+    _write_manifest(repo / HARNESS_RECORD, "harness", {
         "schemaVersion": 1,
         "starter": version,
         "mode": mode,
@@ -288,32 +341,29 @@ def _load_registry() -> dict:
     path = registry_path()
     if not path.is_file():
         return {"schemaVersion": 1, "workspaces": []}
-    data = _read_json(path)
-    if not isinstance(data.get("workspaces"), list):
-        raise StarterError(f"{path} has unexpected content; fix or delete it.")
-    return data
+    return _load_manifest(path, "registry")
 
 
 def remember_workspace(workspace: Path) -> list[str]:
     """Moves the workspace to the top of the saved list. A failure is only a warning: the workspace itself is complete."""
     try:
         data = _load_registry()
-        entries = [w for w in data["workspaces"] if w.get("path") != str(workspace)]
+        entries = [w for w in data["workspaces"] if w["path"] != str(workspace)]
         data["workspaces"] = [{"path": str(workspace), "lastUsed": date.today().isoformat()}, *entries]
-        _write_json(registry_path(), data)
+        _write_manifest(registry_path(), "registry", data)
     except (StarterError, OSError) as error:
         return [f"The workspace was not saved to the workspace list: {error}"]
     return []
 
 
 def _describe_workspace(entry: dict) -> dict:
-    path = Path(entry.get("path", ""))
-    info = {"path": str(path), "lastUsed": entry.get("lastUsed", ""), "exists": path.is_dir(), "initialized": False, "repos": []}
+    path = Path(entry["path"])
+    info = {"path": str(path), "lastUsed": entry["lastUsed"], "exists": path.is_dir(), "initialized": False, "repos": []}
     if (path / WORKSPACE_FILE).is_file():
         try:
-            manifest = _read_json(path / WORKSPACE_FILE)
+            manifest = _load_manifest(path / WORKSPACE_FILE, "workspace")
             info["initialized"] = True
-            info["repos"] = [{k: r.get(k, "") for k in ("name", "path", "kind", "role")} for r in manifest.get("repos", [])]
+            info["repos"] = [{k: r.get(k, "") for k in ("name", "path", "kind", "role")} for r in manifest["repos"]]
         except StarterError as error:
             info["error"] = str(error)
     return info
@@ -373,6 +423,124 @@ def _merge(ours: bytes, base: bytes, theirs: bytes, label: str) -> tuple[bytes, 
     return process.stdout, process.returncode
 
 
+def _split_blocks(text: str) -> tuple[str, dict[str, str]] | None:
+    """The text with every marked block emptied, and the block bodies by name. None when the markers do not pair up."""
+    skeleton: list[str] = []
+    blocks: dict[str, list[str]] = {}
+    current = None
+    for line in text.splitlines(keepends=True):
+        match = _BLOCK_MARKER.match(line.rstrip("\r\n"))
+        if match is None:
+            (blocks[current] if current else skeleton).append(line)
+            continue
+        name, edge = match.groups()
+        if edge == "start":
+            if current is not None or name in blocks:
+                return None
+            current, blocks[name] = name, []
+        elif name != current:
+            return None
+        else:
+            current = None
+        skeleton.append(line)
+    if current is not None:
+        return None
+    return "".join(skeleton), {name: "".join(body) for name, body in blocks.items()}
+
+
+def _fill_blocks(skeleton: str, bodies: dict[str, str]) -> str:
+    lines = []
+    for line in skeleton.splitlines(keepends=True):
+        lines.append(line)
+        match = _BLOCK_MARKER.match(line.rstrip("\r\n"))
+        if match and match.group(2) == "start":
+            lines.append(bodies.get(match.group(1), ""))
+    return "".join(lines)
+
+
+def _merge_with_blocks(ours: bytes, base: bytes, theirs: bytes, label: str) -> tuple[bytes, int] | str | None:
+    """Merges the text outside marked blocks; a block keeps the target's body unless the target never changed it.
+
+    None when the starter's file has no blocks or a version's markers do not pair up; a string is a reason to skip the file.
+    """
+    try:
+        parts = [_split_blocks(content.decode("utf-8")) for content in (ours, base, theirs)]
+    except UnicodeDecodeError:
+        return None
+    if any(part is None for part in parts) or not parts[2][1]:
+        return None
+    (ours_text, ours_blocks), (base_text, base_blocks), (theirs_text, theirs_blocks) = parts
+    changed = {name: body for name, body in ours_blocks.items() if body != base_blocks.get(name)}
+    dropped = sorted(name for name in changed if name not in theirs_blocks)
+    if dropped:
+        return f"the starter no longer has the block {', '.join(dropped)}, which holds this target's content; move it by hand"
+    merged, conflicts = _merge(ours_text.encode(), base_text.encode(), theirs_text.encode(), label)
+    return _fill_blocks(merged.decode("utf-8"), {**theirs_blocks, **changed}).encode(), conflicts
+
+
+_MISSING = object()
+
+
+def _merge_value(base, ours, theirs, key: str, kept: list[str]):
+    """Three-way merge of parsed JSON. Objects merge per key and lists of scalars per item; any other clash keeps `ours`."""
+    if ours == theirs or base == theirs:
+        return ours
+    if base == ours:
+        return theirs
+    if isinstance(ours, dict) and isinstance(theirs, dict) and (base is _MISSING or isinstance(base, dict)):
+        base = {} if base is _MISSING else base
+        merged = {}
+        for name in [*ours, *(name for name in theirs if name not in ours)]:
+            value = _merge_value(base.get(name, _MISSING), ours.get(name, _MISSING), theirs.get(name, _MISSING),
+                                 f"{key}.{name}" if key else name, kept)
+            if value is not _MISSING:
+                merged[name] = value
+        return merged
+    if _scalar_list(ours) and _scalar_list(theirs) and (base is _MISSING or isinstance(base, list)):
+        base = [] if base is _MISSING else base
+        return [item for item in ours if item in theirs or item not in base] + [item for item in theirs if item not in base and item not in ours]
+    kept.append(key or "(whole file)")
+    return ours
+
+
+def _scalar_list(value) -> bool:
+    return isinstance(value, list) and not any(isinstance(item, (dict, list)) for item in value)
+
+
+def _migrate(rel: str, value, target: int):
+    """`value` raised to schemaVersion `target` through MIGRATIONS, or None when a step is missing."""
+    version = value.get("schemaVersion") if isinstance(value, dict) else None
+    if not isinstance(version, int):
+        return value
+    for step_from in range(version, target):
+        step = MIGRATIONS.get((rel, step_from))
+        if step is None:
+            return None
+        value = step(value)
+    return value
+
+
+def _merge_json(rel: str, ours: bytes, base: bytes, theirs: bytes) -> tuple[bytes | None, list[str]] | str | None:
+    """Merges JSON by key instead of by line: (content to write or None, keys where the target's value was kept).
+
+    None when a version does not parse, so the caller falls back to a text merge; a string is a reason to skip the file.
+    """
+    try:
+        original, base_value, theirs_value = (json.loads(content) for content in (ours, base, theirs))
+    except ValueError:
+        return None
+    ours_value = original
+    target = theirs_value.get("schemaVersion") if isinstance(theirs_value, dict) else None
+    if isinstance(target, int):
+        ours_value, base_value = _migrate(rel, ours_value, target), _migrate(rel, base_value, target)
+        if ours_value is None or base_value is None:
+            return f"the starter raised schemaVersion to {target} without a migration in tool/starter.py MIGRATIONS; merge by hand"
+    kept: list[str] = []
+    merged = _merge_value(base_value, ours_value, theirs_value, "", kept)
+    data = (json.dumps(merged, indent=2, ensure_ascii=False) + "\n").encode() if merged != original else None
+    return data, kept
+
+
 def plan_upgrade(root: Path, label: str, owned: set[str], sources: dict[str, str], base_source, listing: dict,
                  append_only: set[str] = frozenset()) -> dict:
     """What an upgrade does to one target, computed without writing.
@@ -380,7 +548,8 @@ def plan_upgrade(root: Path, label: str, owned: set[str], sources: dict[str, str
     `owned` are the destination paths the starter installed at the recorded commit, `sources` maps every destination path
     the starter ships now to its starter path, and `base_source` maps a destination path to its starter path at that commit.
     """
-    plan: dict = {"writes": {}, "owned": set(), "updated": [], "merged": [], "conflicts": [], "added": [], "skipped": [], "removedUpstream": []}
+    plan: dict = {"writes": {}, "owned": set(), "updated": [], "merged": [], "conflicts": [], "kept": [], "added": [], "skipped": [],
+                  "removedUpstream": []}
     for rel in sorted(owned | sources.keys()):
         ours = _disk(root / rel)
         if rel not in sources:
@@ -408,6 +577,8 @@ def plan_upgrade(root: Path, label: str, owned: set[str], sources: dict[str, str
         elif ours == base:
             plan["writes"][rel] = (theirs, sources[rel])
             plan["updated"].append(rel)
+        elif rel in PROJECT_OWNED:
+            plan["skipped"].append({"path": rel, "reason": "the target writes this file after install; compare it with the starter's copy by hand"})
         elif "link" in (ours[0], base[0], theirs[0]) or any(b"\0" in c[1] for c in (ours, base, theirs)):
             plan["skipped"].append({"path": rel, "reason": "changed both here and in the starter, and it is a link or binary; merge by hand"})
         elif rel in append_only:
@@ -417,8 +588,22 @@ def plan_upgrade(root: Path, label: str, owned: set[str], sources: dict[str, str
             if missing:
                 plan["writes"][rel] = (("file", _with_lines(ours[1].decode(), missing).encode()), sources[rel])
                 plan["merged"].append(rel)
+        elif rel.endswith(".json") and (outcome := _merge_json(rel, ours[1], base[1], theirs[1])) is not None:
+            if isinstance(outcome, str):
+                plan["skipped"].append({"path": rel, "reason": outcome})
+                continue
+            data, kept = outcome
+            if data is not None:
+                plan["writes"][rel] = (("file", data), sources[rel])
+                plan["merged"].append(rel)
+            if kept:
+                plan["kept"].append({"path": rel, "keys": kept})
         else:
-            merged, conflicts = _merge(ours[1], base[1], theirs[1], label)
+            outcome = _merge_with_blocks(ours[1], base[1], theirs[1], label) or _merge(ours[1], base[1], theirs[1], label)
+            if isinstance(outcome, str):
+                plan["skipped"].append({"path": rel, "reason": outcome})
+                continue
+            merged, conflicts = outcome
             plan["writes"][rel] = (("file", merged), sources[rel])
             plan["conflicts" if conflicts else "merged"].append(rel)
     return plan
@@ -474,7 +659,7 @@ def _check_base(report: dict, commit: str | None, version: dict) -> bool:
 
 
 def _finish_plan(report: dict, root: Path, plan: dict, record: str) -> None:
-    for key in ("updated", "merged", "conflicts", "added", "skipped", "removedUpstream"):
+    for key in ("updated", "merged", "conflicts", "kept", "added", "skipped", "removedUpstream"):
         report[key] = plan[key]
     dirty = _dirty(root, [*plan["writes"], record])
     if dirty:
@@ -484,28 +669,32 @@ def _finish_plan(report: dict, root: Path, plan: dict, record: str) -> None:
 def _plan_repository(workspace: Path, repo: dict, version: dict, listings: dict) -> tuple[dict, dict | None]:
     root = workspace / repo["path"]
     record_path = root / HARNESS_RECORD
-    record = _read_json(record_path) if record_path.is_file() else None
-    commit = ((record or {}).get("starter") or {}).get("commit")
-    report = _target_report(repo["name"], root, commit)
-    if record is None:
+    report = _target_report(repo["name"], root, None)
+    if not record_path.is_file():
         report["blockers"].append(f"{HARNESS_RECORD} is missing")
         return report, None
+    try:
+        record = _load_manifest(record_path, "harness")
+    except StarterError as error:
+        report["blockers"].append(str(error))
+        return report, None
+    commit = report["from"] = record["starter"]["commit"]
     if not _check_base(report, commit, version):
         return report, None
-    if (record.get("starter") or {}).get("dirty"):
+    if record["starter"]["dirty"]:
         report["warning"] = "it was installed from a starter with uncommitted template changes; review the merged files closely"
     listing = listings.setdefault(commit, _starter_listing(commit))
     sources = {rel: f"template/{rel}" for rel in tree_files(TEMPLATE)}
-    append_only = MERGED_ON_ADOPT if record.get("mode") == "adopt" else set()
-    plan = plan_upgrade(root, repo["name"], set(record.get("files", {})), sources, lambda rel: f"template/{rel}", listing, append_only)
+    append_only = MERGED_ON_ADOPT if record["mode"] == "adopt" else set()
+    plan = plan_upgrade(root, repo["name"], set(record["files"]), sources, lambda rel: f"template/{rel}", listing, append_only)
     _finish_plan(report, root, plan, HARNESS_RECORD)
     record = {**record, "starter": version, "upgradedAt": date.today().isoformat(),
               "files": {rel: file_hash(TEMPLATE / rel) for rel in sorted(plan["owned"])}}
-    return report, {"root": root, "plan": plan, "record_path": record_path, "record": record}
+    return report, {"root": root, "plan": plan, "record_path": record_path, "record_kind": "harness", "record": record}
 
 
 def _plan_workspace(workspace: Path, manifest: dict, version: dict, listings: dict) -> tuple[dict, dict | None]:
-    commit = (manifest.get("starter") or {}).get("commit")
+    commit = manifest["starter"]["commit"]
     report = _target_report("workspace", workspace, commit)
     if not _check_base(report, commit, version):
         return report, None
@@ -516,7 +705,8 @@ def _plan_workspace(workspace: Path, manifest: dict, version: dict, listings: di
                     for rel in ["ai.py", *(f"ai_harness/{f}" for f in tree_files(TEMPLATE / "tool" / "ai_harness"))]})
     plan = plan_upgrade(workspace, "workspace", owned, sources, _workspace_source, listing)
     _finish_plan(report, workspace, plan, WORKSPACE_FILE)
-    return report, {"root": workspace, "plan": plan, "record_path": workspace / WORKSPACE_FILE, "record": {**manifest, "starter": version}}
+    return report, {"root": workspace, "plan": plan, "record_path": workspace / WORKSPACE_FILE, "record_kind": "workspace",
+                    "record": {**manifest, "starter": version}}
 
 
 def cmd_new(args: argparse.Namespace) -> dict:
@@ -597,10 +787,6 @@ def cmd_sync(args: argparse.Namespace) -> dict:
     manifest = _load_workspace(workspace)
     if manifest is None:
         raise StarterError(f"{workspace} has no {WORKSPACE_FILE}.")
-    for repo in manifest.get("repos", []):
-        missing = [k for k in ("name", "path", "kind") if not isinstance(repo.get(k), str) or not repo[k]]
-        if missing or repo["kind"] not in ("managed", "registered"):
-            raise StarterError(f"{WORKSPACE_FILE}: invalid entry {repo!r}; it needs name, path, and kind managed or registered.")
     warning = sync_agents(workspace, manifest["repos"])
     if warning:
         raise StarterError(warning)
@@ -616,7 +802,7 @@ def cmd_upgrade(args: argparse.Namespace) -> dict:
     if version["commit"] is None or version["dirty"]:
         raise StarterError("Commit the starter first: an upgrade records the starter commit as the base of the next one, "
                            "so template/ and workspace-template/ must match it.")
-    repos = {r["name"]: r for r in manifest.get("repos", [])}
+    repos = {r["name"]: r for r in manifest["repos"]}
     for name in args.name:
         if name not in repos:
             raise StarterError(f"The workspace does not register {name!r}.")
@@ -627,6 +813,10 @@ def cmd_upgrade(args: argparse.Namespace) -> dict:
     planned = [_plan_workspace(workspace, manifest, version, listings)] if not args.name else []
     names = args.name or [r["name"] for r in manifest["repos"] if r["kind"] == "managed"]
     planned += [_plan_repository(workspace, repos[name], version, listings) for name in names]
+    for report, work in planned:
+        if work:
+            report["blockers"] += [f"the updated {work['record_path'].name} would be invalid: {error}"
+                                   for error in manifest_errors(work["record_kind"], work["record"])]
     reports = [report for report, _ in planned]
     blocked = [f"{r['target']}: {b}" for r in reports for b in r["blockers"]]
     if blocked and not args.dry_run:
@@ -642,8 +832,11 @@ def cmd_upgrade(args: argparse.Namespace) -> dict:
               "warnings": [f"{r['target']}: {r['warning']}" for r in reports if r.get("warning")]}
     if not args.dry_run:
         result["warnings"] += remember_workspace(workspace)
-        result["next"] = ("Resolve the conflict markers in: " + ", ".join(conflicts) + ". Then " if conflicts else "") + \
-            "run `python3 tool/ai.py verify` in each upgraded repository and review the diff there; nothing was committed."
+        kept = [f"{r['path']}/{k['path']}" for r in reports for k in r.get("kept", [])]
+        result["next"] = ("Resolve the conflict markers in: " + ", ".join(conflicts) + ". " if conflicts else "") + \
+            ("Each target kept its own value for the JSON keys under kept; compare them with the starter's in: " + ", ".join(kept) + ". "
+             if kept else "") + \
+            "Run `python3 tool/ai.py verify` in each upgraded repository and review the diff there; nothing was committed."
     return result
 
 
@@ -660,11 +853,11 @@ def cmd_workspace(args: argparse.Namespace) -> dict:
         return {"ok": True, "registry": str(registry_path()), "workspace": _describe_workspace(_load_registry()["workspaces"][0])}
     target = str(Path(args.path).expanduser().resolve())
     data = _load_registry()
-    remaining = [w for w in data["workspaces"] if w.get("path") != target]
+    remaining = [w for w in data["workspaces"] if w["path"] != target]
     if len(remaining) == len(data["workspaces"]):
         raise StarterError(f"{target} is not in the workspace list.")
     data["workspaces"] = remaining
-    _write_json(registry_path(), data)
+    _write_manifest(registry_path(), "registry", data)
     return {"ok": True, "registry": str(registry_path()), "removed": target, "note": "Only the list entry was removed; the folder is untouched."}
 
 
@@ -709,6 +902,11 @@ def main(argv: list[str]) -> int:
     except StarterError as error:
         print(json.dumps({"ok": False, "error": str(error)}, indent=2, ensure_ascii=False))
         return 1
+    except Exception as error:
+        # The skills read this output as JSON; a bug must reach them as a report, not as a bare traceback.
+        print(json.dumps({"ok": False, "kind": "internal", "error": f"Unexpected {type(error).__name__}: {error}. This is a starter bug.",
+                          "traceback": traceback.format_exc().splitlines()}, indent=2, ensure_ascii=False))
+        return 2
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0
 

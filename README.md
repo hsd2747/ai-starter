@@ -52,6 +52,15 @@ Each target recorded the starter commit it came from (`.ai/harness.json`, or `wo
 Onboarding edits and starter edits on different lines both survive; the same lines changed on both sides leave conflict markers,
 which `verify` then reports until they are resolved. Files the starter removed are listed, never deleted.
 
+Three kinds of content are not merged line by line:
+
+- **Marked blocks.** Text between `project:<name>` (or `workspace:<name>`) start and end markers belongs to the target: the repository map
+  and rules in `AGENTS.md`, the toolchain step in `verify.yml`, the project section of `.gitignore`, and the contracts in the workspace `AGENTS.md`.
+  The merge covers only the text around the blocks, and each block keeps the target's text.
+- **JSON files** merge by key, and lists of plain values merge by item. Where both sides changed the same key, the target's value stays
+  and the key is listed under `kept`. A `schemaVersion` raised by the starter needs a migration step in `MIGRATIONS` in `tool/starter.py`.
+- **Seeds** (`wiki/index.md`, `wiki/log.md`) are replaced only while the target has not changed them, and are otherwise left alone.
+
 The starter must be committed, and every file `upgrade` would write must be committed and unmodified in its target;
 otherwise nothing is written anywhere. The result arrives as an ordinary uncommitted diff in each repository.
 
@@ -106,6 +115,7 @@ needs belong in its own `AGENTS.md`. Run checks from inside a repository: `cd be
 | `template/` | Files copied into every new or adopted repository |
 | `workspace-template/` | Files for a workspace root |
 | `tool/starter.py` | The generator |
+| `tool/schemas/` | Schemas of `workspace.json`, `.ai/harness.json`, and the saved workspace list, checked on every read and write |
 | `tool/ai.py` | Guard hook for sessions in this starter |
 | `tests/` | Generator tests |
 | `.claude/skills/starter-*` | Conversational skills for the generator |

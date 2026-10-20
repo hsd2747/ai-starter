@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ai-starter/registry.schema.json",
+  "title": "Saved workspace list (~/.claude/ai-starter/workspaces.json)",
+  "type": "object",
+  "required": ["schemaVersion", "workspaces"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "workspaces": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "lastUsed"],
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "lastUsed": { "type": "string", "format": "date" }
+        }
+      }
+    }
+  }
+}

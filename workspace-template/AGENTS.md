@@ -16,8 +16,10 @@ The table between the markers is generated from `workspace.json` by the starter 
 
 ## Contracts between repositories
 
+<!-- workspace:contracts:start -->
 Not written yet. For each contract, name the owner, the consumers, and where its source of truth lives, one line each.
 For example: `be` owns the HTTP API; its OpenAPI document is the source of truth; `app` and `web` consume it.
+<!-- workspace:contracts:end -->
 
 ## Rules
 

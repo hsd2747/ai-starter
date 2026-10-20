@@ -19,7 +19,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      # project:toolchain:start
       # TODO(onboarding): install the toolchain that the checks in .ai/config.json need (runtime, package manager, dependencies).
+      # project:toolchain:end
 
       - name: Doctor
         run: python3 tool/ai.py doctor

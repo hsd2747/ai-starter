@@ -28,3 +28,7 @@ __pycache__/
 
 # OS and editor noise
 .DS_Store
+
+# project:ignore:start
+# Build and cache outputs of this project's stack go between these markers.
+# project:ignore:end

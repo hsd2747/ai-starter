@@ -21,12 +21,16 @@ Until then, only onboarding and harness maintenance may write tracked files.
 
 ## Repository map
 
-Not onboarded yet. Onboarding replaces this section with the top-level layout, one line per area, and links
+<!-- project:map:start -->
+Not onboarded yet. Onboarding replaces the text between these markers with the top-level layout, one line per area, and links
 to the architecture pages in the wiki.
+<!-- project:map:end -->
 
 ### Dependency rule
 
+<!-- project:dependency-rule:start -->
 Not onboarded yet. Onboarding states the allowed dependency directions in one or two lines and the check that enforces them.
+<!-- project:dependency-rule:end -->
 
 ### Harness
 
@@ -35,6 +39,14 @@ Not onboarded yet. Onboarding states the allowed dependency directions in one or
 - `.agents/skills/`: the only copy of every skill. `.claude/skills/` holds links to it; after adding a skill run `python3 tool/ai.py adapters sync`.
 - `tool/ai.py`: the verification CLI (Python 3.10+, standard library only).
 - `wiki/`: project knowledge that outlives a task. Its format is defined in [wiki/README.md](wiki/README.md).
+- `project:<name>` markers in harness files enclose this repository's own content. The starter's upgrade keeps that content as it is
+  and merges only the text around it, so keep the markers and write project content between them.
+
+## Project rules
+
+<!-- project:rules:start -->
+None yet. Judgement rules that only this repository needs go between these markers, one line each. Procedures still go into skills.
+<!-- project:rules:end -->
 
 ## Sources of truth
 

@@ -58,7 +58,8 @@ Never overwrite an existing non-harness file. If a target exists, skip it and re
    - `late`: linters, type checkers, boundary checks, and tests.
    - Use `{files}` to pass changed files and `allCommand` for the `--all` form. Prefer read-only check modes; a check must never fix files silently.
    - A boundary check for an existing codebase starts as `required: false` or with a baseline, so legacy violations do not block every task.
-3. `AGENTS.md`: replace only the **Repository map** and **Dependency rule** sections. Keep them to a few lines that link to wiki pages.
+3. `AGENTS.md`: replace only the text between the `project:map` and `project:dependency-rule` markers, and keep the markers.
+   Keep each to a few lines that link to wiki pages. Rules that only this project needs go between the `project:rules` markers.
 4. `REVIEW.md`: replace the Architecture perspective line only if the project needs a more specific one.
 5. Wiki, following [wiki/README.md](../../../wiki/README.md):
    - Create category folders named after code areas, not after layers of the harness.
@@ -67,8 +68,8 @@ Never overwrite an existing non-harness file. If a target exists, skip it and re
    - Add every page to `wiki/index.md` and append one `setup` entry to `wiki/log.md` that lists created pages and rejected options.
 6. Skeleton: for a new project, prefer the ecosystem's official scaffolder (after approval) over hand-made folders, then add only the
    top-level directories the approved layout needs. Do not create empty layer folders for features that do not exist yet.
-7. `.github/workflows/verify.yml`: replace the `TODO(onboarding)` step with the toolchain setup the checks need.
-8. `.gitignore`: append the ecosystem's build and cache outputs. Keep `.env` and `.ai/runs/` ignored.
+7. `.github/workflows/verify.yml`: replace the `TODO(onboarding)` line between the `project:toolchain` markers with the toolchain setup the checks need.
+8. `.gitignore`: add the ecosystem's build and cache outputs between the `project:ignore` markers, or at the end of an adopted file without them. Keep `.env` and `.ai/runs/` ignored.
 
 ## 6. Verify and finish
 

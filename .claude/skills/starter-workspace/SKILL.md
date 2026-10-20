@@ -25,9 +25,9 @@ First choose the workspace with [choose-workspace.md](references/choose-workspac
    generated clients, auth configuration, and environment variable names that point at another repository. Read variable names from `.env.example` only; never open `.env` files.
 3. Ask only what the code did not answer: owner, consumers, source of truth, compatibility policy, and who must hear about a breaking change.
 4. Propose the new text of the "Contracts between repositories" section, one line per contract:
-   `<owner> owns <contract>; source of truth: <path or URL>; consumers: <repos>; changes: <policy>`. Wait for approval, then replace only that section.
+   `<owner> owns <contract>; source of truth: <path or URL>; consumers: <repos>; changes: <policy>`. Wait for approval, then replace only the text between the `workspace:contracts` markers.
 5. A rule that a repository must obey also has to live in that repository. For each affected managed repository, propose a candidate:
-   a wiki `rule` page following its `wiki/README.md`, or a line in its `AGENTS.md` (L2 there). Write it only after approval, under that repository's `AGENTS.md`
+   a wiki `rule` page following its `wiki/README.md`, or a line between the `project:rules` markers of its `AGENTS.md` (L2 there). Write it only after approval, under that repository's `AGENTS.md`
    and its `repo-wiki-write` skill, then run `cd <repo> && python3 tool/ai.py verify`. A registered repository gets no harness file; mention the gap instead.
 
 ## Commit

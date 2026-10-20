@@ -11,6 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tool"))
 
@@ -196,6 +197,48 @@ class StarterTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertFalse((starter.STARTER / "scratch-ws").exists())
 
+    def test_invalid_workspace_manifest_stops_every_command_before_it_writes(self):
+        self.assertEqual(run("new", "--workspace", str(self.ws), "--name", "be")[0], 0)
+        manifest = self.manifest()
+        del manifest["repos"][0]["kind"]
+        (self.ws / "workspace.json").write_text(json.dumps(manifest), encoding="utf-8")
+        before = snapshot(self.ws)
+        for command, *rest in (("new", "--name", "web"), ("sync",), ("upgrade", "--dry-run")):
+            code, report = run(command, "--workspace", str(self.ws), *rest)
+            self.assertEqual(code, 1, report)
+            self.assertIn("workspace.schema.json", report["error"])
+            self.assertIn("'kind'", report["error"])
+        self.assertEqual(snapshot(self.ws), before)
+        listed = run("workspace", "list")[1]["workspaces"][0]
+        self.assertIn("workspace.schema.json", listed["error"])
+
+    def test_duplicate_or_escaping_manifest_entries_are_rejected(self):
+        self.assertEqual(run("new", "--workspace", str(self.ws), "--name", "be")[0], 0)
+        manifest = self.manifest()
+        manifest["repos"].append({**manifest["repos"][0], "name": "be2"})
+        manifest["repos"].append({**manifest["repos"][0], "name": "up", "path": "../elsewhere"})
+        (self.ws / "workspace.json").write_text(json.dumps(manifest), encoding="utf-8")
+        code, report = run("sync", "--workspace", str(self.ws))
+        self.assertEqual(code, 1, report)
+        self.assertIn("path 'be' appears more than once", report["error"])
+        self.assertIn("'../elsewhere' is not a clean folder path", report["error"])
+
+    def test_invalid_workspace_list_is_reported(self):
+        self.registry.parent.mkdir(parents=True)
+        self.registry.write_text(json.dumps({"schemaVersion": 1, "workspaces": [{"path": str(self.ws)}]}), encoding="utf-8")
+        code, report = run("workspace", "list")
+        self.assertEqual(code, 1, report)
+        self.assertIn("registry.schema.json", report["error"])
+        self.assertIn("'lastUsed'", report["error"])
+
+    def test_unexpected_error_is_still_reported_as_json(self):
+        with mock.patch.object(starter, "cmd_sync", side_effect=RuntimeError("boom")):
+            code, report = run("sync", "--workspace", str(self.ws))
+        self.assertEqual(code, 2)
+        self.assertEqual(report["kind"], "internal")
+        self.assertIn("RuntimeError: boom", report["error"])
+        self.assertTrue(report["traceback"])
+
     def test_folder_with_foreign_workspace_files_is_not_initialized(self):
         self.ws.mkdir()
         (self.ws / "AGENTS.md").write_text("# Mine\n", encoding="utf-8")
@@ -251,7 +294,7 @@ class UpgradeTest(unittest.TestCase):
 
     def test_merges_project_and_starter_edits_and_records_the_new_base(self):
         repo = self.create()
-        self.edit(repo / "AGENTS.md", "Not onboarded yet. Onboarding replaces this section", "Project map written by onboarding.")
+        self.edit(repo / "AGENTS.md", "Not onboarded yet. Onboarding replaces the text between these markers", "Project map written by onboarding.")
         commit_all(repo)
         template = self.fake / "template"
         self.edit(template / "AGENTS.md", "- Use subagents and handoff notes", "- Starter goal added later.\n- Use subagents and handoff notes")
@@ -306,6 +349,142 @@ class UpgradeTest(unittest.TestCase):
         self.assertEqual(report["targets"][0]["conflicts"], ["AGENTS.md"])
         agents = (repo / "AGENTS.md").read_text(encoding="utf-8")
         self.assertIn("<<<<<<< be\n- Project wording.\n=======\n- Starter wording.\n>>>>>>> starter (current)", agents)
+
+    def test_marked_blocks_keep_the_target_text_while_the_text_around_them_merges(self):
+        repo = self.create()
+        self.edit(repo / "AGENTS.md", "Not onboarded yet. Onboarding replaces the text between these markers with the top-level layout, "
+                  "one line per area, and links\nto the architecture pages in the wiki.", "- `src/`: application code.")
+        commit_all(repo)
+        template = self.fake / "template/AGENTS.md"
+        self.edit(template, "Not onboarded yet. Onboarding replaces the text", "Not onboarded. Onboarding replaces the text")
+        self.edit(template, "<!-- project:map:end -->\n", "<!-- project:map:end -->\n\nStarter note right after the map.\n")
+        self.edit(template, "Not onboarded yet. Onboarding states", "Not onboarded. Onboarding states")
+        commit_all(self.fake)
+
+        code, report = run("upgrade", "--workspace", str(self.ws), "--name", "be")
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report["targets"][0]["merged"], ["AGENTS.md"])
+        self.assertEqual(report["targets"][0]["conflicts"], [])
+        agents = (repo / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("<!-- project:map:start -->\n- `src/`: application code.\n<!-- project:map:end -->\n\nStarter note right after the map.\n", agents)
+        self.assertIn("Not onboarded. Onboarding states", agents)
+        self.assertNotIn("Not onboarded. Onboarding replaces", agents)
+
+    def test_a_filled_block_the_starter_dropped_skips_the_file(self):
+        repo = self.create()
+        self.edit(repo / "AGENTS.md", "None yet. Judgement rules", "- Never call the payment sandbox from tests.\nNone yet. Judgement rules")
+        commit_all(repo)
+        template = self.fake / "template/AGENTS.md"
+        text = template.read_text(encoding="utf-8")
+        template.write_text(re.sub(r"## Project rules\n\n<!-- project:rules:start -->\n.*?<!-- project:rules:end -->\n\n", "", text, flags=re.S),
+                            encoding="utf-8")
+        commit_all(self.fake)
+
+        before = (repo / "AGENTS.md").read_bytes()
+        code, report = run("upgrade", "--workspace", str(self.ws), "--name", "be")
+        self.assertEqual(code, 0, report)
+        skipped = report["targets"][0]["skipped"]
+        self.assertEqual([s["path"] for s in skipped], ["AGENTS.md"])
+        self.assertIn("project:rules", skipped[0]["reason"])
+        self.assertEqual((repo / "AGENTS.md").read_bytes(), before)
+
+    def test_json_merges_by_key_and_keeps_the_target_value_on_a_clash(self):
+        repo = self.create()
+        config = json.loads((repo / ".ai/config.json").read_text(encoding="utf-8"))
+        config["project"]["name"] = "be"
+        config["git"]["baseBranch"] = "develop"
+        config["toolchain"] = [{"name": "node", "command": ["node", "--version"]}]
+        (repo / ".ai/config.json").write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+        settings = json.loads((repo / ".claude/settings.json").read_text(encoding="utf-8"))
+        settings["permissions"]["allow"].append("Bash(npm test:*)")
+        (repo / ".claude/settings.json").write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+        commit_all(repo)
+        template = self.fake / "template"
+        config = json.loads((template / ".ai/config.json").read_text(encoding="utf-8"))
+        config["git"]["baseBranch"] = "trunk"
+        config["wiki"]["pageLimit"] = 500
+        (template / ".ai/config.json").write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+        settings = json.loads((template / ".claude/settings.json").read_text(encoding="utf-8"))
+        settings["permissions"]["allow"].append("Bash(git blame:*)")
+        (template / ".claude/settings.json").write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+        commit_all(self.fake)
+
+        code, report = run("upgrade", "--workspace", str(self.ws), "--name", "be")
+        self.assertEqual(code, 0, report)
+        be = report["targets"][0]
+        self.assertEqual(be["merged"], [".ai/config.json", ".claude/settings.json"])
+        self.assertEqual(be["conflicts"], [])
+        self.assertEqual(be["kept"], [{"path": ".ai/config.json", "keys": ["git.baseBranch"]}])
+        config = json.loads((repo / ".ai/config.json").read_text(encoding="utf-8"))
+        self.assertEqual((config["project"]["name"], config["git"]["baseBranch"], config["wiki"]["pageLimit"]), ("be", "develop", 500))
+        self.assertEqual(config["toolchain"], [{"name": "node", "command": ["node", "--version"]}])
+        allow = json.loads((repo / ".claude/settings.json").read_text(encoding="utf-8"))["permissions"]["allow"]
+        self.assertEqual(allow[-2:], ["Bash(npm test:*)", "Bash(git blame:*)"])
+
+    def test_raised_schema_version_needs_a_migration(self):
+        repo = self.create()
+        self.edit(repo / ".ai/config.json", '"name": ""', '"name": "be"')
+        commit_all(repo)
+        template = self.fake / "template/.ai/config.json"
+        self.edit(template, '"schemaVersion": 1', '"schemaVersion": 2')
+        self.edit(template, '"summary": ""', '"description": ""')
+        commit_all(self.fake)
+
+        code, report = run("upgrade", "--workspace", str(self.ws), "--name", "be", "--dry-run")
+        self.assertEqual(code, 0, report)
+        skipped = report["targets"][0]["skipped"]
+        self.assertEqual([s["path"] for s in skipped], [".ai/config.json"])
+        self.assertIn("MIGRATIONS", skipped[0]["reason"])
+
+        def rename_summary(value: dict) -> dict:
+            project = {"name": value["project"]["name"], "description": value["project"]["summary"]}
+            return {**value, "schemaVersion": 2, "project": project}
+
+        starter.MIGRATIONS[(".ai/config.json", 1)] = rename_summary
+        self.addCleanup(starter.MIGRATIONS.pop, (".ai/config.json", 1))
+        code, report = run("upgrade", "--workspace", str(self.ws), "--name", "be")
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report["targets"][0]["kept"], [])
+        config = json.loads((repo / ".ai/config.json").read_text(encoding="utf-8"))
+        self.assertEqual((config["schemaVersion"], config["project"]), (2, {"name": "be", "description": ""}))
+
+    def test_seed_files_are_replaced_only_while_untouched(self):
+        repo = self.create()
+        with (repo / "wiki/log.md").open("a", encoding="utf-8") as handle:
+            handle.write("\n## [2026-01-01] setup | Architecture\nSource: onboarding\nCreated: [[architecture]]\n")
+        commit_all(repo)
+        template = self.fake / "template/wiki"
+        self.edit(template / "log.md", "Append-only history of wiki writes.", "Append-only history of every wiki write.")
+        self.edit(template / "index.md", "Catalog of every page.", "Catalog of every wiki page.")
+        commit_all(self.fake)
+
+        before = (repo / "wiki/log.md").read_bytes()
+        code, report = run("upgrade", "--workspace", str(self.ws), "--name", "be")
+        self.assertEqual(code, 0, report)
+        be = report["targets"][0]
+        self.assertEqual(be["updated"], ["wiki/index.md"])
+        self.assertEqual([s["path"] for s in be["skipped"]], ["wiki/log.md"])
+        self.assertEqual((repo / "wiki/log.md").read_bytes(), before)
+
+    def test_invalid_harness_record_blocks_its_repository(self):
+        repo = self.create()
+        record = json.loads((repo / ".ai/harness.json").read_text(encoding="utf-8"))
+        record["files"]["../outside"] = record["files"]["AGENTS.md"]
+        (repo / ".ai/harness.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+        commit_all(repo)
+        self.edit(self.fake / "template/tool/ai_harness/guard.py", "MAX_DEPTH = 4", "MAX_DEPTH = 5")
+        commit_all(self.fake)
+
+        code, report = run("upgrade", "--workspace", str(self.ws), "--dry-run")
+        self.assertEqual(code, 0, report)
+        blockers = report["targets"][1]["blockers"]
+        self.assertEqual(len(blockers), 1)
+        self.assertIn("harness.schema.json", blockers[0])
+        self.assertIn("'../outside'", blockers[0])
+
+        before = snapshot(repo), snapshot(self.ws / ".ai")
+        self.assertEqual(run("upgrade", "--workspace", str(self.ws))[0], 1)
+        self.assertEqual((snapshot(repo), snapshot(self.ws / ".ai")), before)
 
     def test_uncommitted_target_file_blocks_every_write(self):
         repo = self.create()
