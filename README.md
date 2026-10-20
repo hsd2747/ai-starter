@@ -104,6 +104,7 @@ Each skill starts from the saved workspace list; when it is empty, the skill exp
 
 | Skill | Ask for example | Does |
 | --- | --- | --- |
+| `starter-help` | "How do I use this?" | Explains the starter, what to ask for, and a next step from your saved workspaces |
 | `starter-new-repo` | "Create be and web in ~/work/my-product" | Checks the starter commit, collects names and roles, runs `new` |
 | `starter-onboard-repo` | "Onboard be" | Runs the repository's own `repo-onboard` under its `AGENTS.md`, from this session |
 | `starter-adopt-repo` | "Add the existing admin repository" | Lists it with its role, optionally with the harness, runs `adopt` |

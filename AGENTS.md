@@ -24,7 +24,7 @@ This repository is ai-starter, a generator. It is never onboarded and holds no p
   Test files import the generator through `support`, which puts `tool/` on the path. `test_merge.py` tests policies and merges
   directly, without git repositories; cover a new merge rule there first.
 - `.claude/skills/starter-*`: conversational wrappers around the generator (workspace: `starter-workspace`, `starter-adopt-repo`, `starter-unregister-repo`;
-  harness: `starter-install-harness`, `starter-upgrade`, `starter-onboard-repo`; both: `starter-new-repo`). When one of them works inside a generated repository, that repository's `AGENTS.md` rules there.
+  harness: `starter-install-harness`, `starter-upgrade`, `starter-onboard-repo`; both: `starter-new-repo`; usage guide: `starter-help`). When one of them works inside a generated repository, that repository's `AGENTS.md` rules there.
 
 ## Rules
 
