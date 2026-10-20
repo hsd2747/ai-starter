@@ -59,7 +59,10 @@ Everything language-specific comes from `checks` in `.ai/config.json`, which onl
 Git does not share `core.hooksPath` through a clone, so run `python3 tool/ai.py hooks install` once after cloning; `doctor` warns until you do.
 If the repository already runs hooks from another tool (husky, lefthook, pre-commit, or files in `.git/hooks`), `hooks install` leaves them
 in place, and you add the same verify call to that tool's pre-commit hook. Commands of your own go between the `project:pre-commit` markers.
-`verify` checks the working tree, so changes you leave unstaged are checked too. Verification receipts collect in `.ai/runs/pre-commit/`.
+`verify` checks the working tree, so changes you leave unstaged are checked too. For a file staged in part, the secret scan and the
+whitespace and conflict-marker check also read the staged copy, because a commit can take either one; a leaked key cannot be taken back.
+Project checks (format, lint, tests) run on the working tree only, so staging in part stays possible and they never move your files.
+Verification receipts collect in `.ai/runs/pre-commit/`.
 
 ## Guard hook
 

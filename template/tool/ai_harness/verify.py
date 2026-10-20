@@ -51,9 +51,12 @@ def _internal(check_id: str, failures: list[str], passed: str, started: float, w
     }
 
 
-def whitespace_failures(root: Path, base: str, untracked: list[str]) -> list[str]:
+def whitespace_failures(root: Path, base: str, untracked: list[str], staged: list[str]) -> list[str]:
     output = gitutil.git(root, "diff", "--check", base, "--", check=False)
     failures = [line for line in output.decode("utf-8", errors="replace").splitlines() if line.strip()]
+    if staged:
+        output = gitutil.git(root, "--literal-pathspecs", "diff", "--cached", "--check", base, "--", *staged, check=False)
+        failures += [f"staged: {line}" for line in output.decode("utf-8", errors="replace").splitlines() if line.strip()]
     # git diff --check never sees untracked files, which are most of a new feature.
     for path in untracked:
         text = read_text_or_none(root / path)
@@ -80,12 +83,14 @@ def run_internal(root: Path, config: dict, subject: dict, scope: str) -> tuple[l
     files = subject["files"]
     existing = [f for f in files if (root / f).is_file()]
     untracked = set(gitutil.untracked_files(root))
+    staged = [f for f in gitutil.staged_differences(root) if not checks_module.is_ignored(f, config)]
     results = []
     warnings: list[str] = []
 
     started = time.monotonic()
     results.append(_internal("git-diff-check",
-                             whitespace_failures(root, subject["base"], [f for f in existing if f in untracked and not checks_module.is_ignored(f, config)]),
+                             whitespace_failures(root, subject["base"], [f for f in existing if f in untracked and not checks_module.is_ignored(f, config)],
+                                                 staged),
                              "No whitespace errors or conflict markers.", started))
 
     started = time.monotonic()
@@ -93,10 +98,15 @@ def run_internal(root: Path, config: dict, subject: dict, scope: str) -> tuple[l
     secret_failures = secrets.secret_file_failures([f for f in candidates if not checks_module.is_ignored(f, config)])
     suppressed: list[str] = []
     secret_failures += secrets.content_failures(root, [f for f in existing if not checks_module.is_ignored(f, config)], suppressed)
+    for path in staged:
+        text = gitutil.staged_text(root, path)
+        if text is not None:
+            secret_failures += secrets.text_failures(f"{path} (staged)", text, suppressed)
     if suppressed:
         warnings.append(f"{len(suppressed)} secret-scan hit(s) suppressed by '{secrets.ALLOW_MARKER}'; a reviewer must confirm each: "
                         + "; ".join(suppressed))
-    results.append(_internal("secret-scan", secret_failures, f"{len(existing)} file(s) scanned; no secrets found.", started, warnings))
+    scanned = f"{len(existing)} file(s)" + (f" and the staged copies of {len(staged)}" if staged else "")
+    results.append(_internal("secret-scan", secret_failures, f"{scanned} scanned; no secrets found.", started, warnings))
 
     started = time.monotonic()
     results.append(_internal("harness-config", harness_config_failures(root), "Harness configuration is valid.", started))

@@ -69,19 +69,24 @@ def _finding(name: str, match: re.Match[str]) -> bool:
 
 
 def content_failures(root: Path, files: list[str], suppressed: list[str] | None = None) -> list[str]:
-    """Pattern hits per line. Hits on lines carrying ALLOW_MARKER go to `suppressed` so a report can still show them."""
     failures = []
     for path in files:
         text = read_text_or_none(root / path)
-        if text is None:
-            continue
-        for number, line in enumerate(text.splitlines(), start=1):
-            for name, pattern in PATTERNS.items():
-                if any(_finding(name, match) for match in pattern.finditer(line)):
-                    entry = f"{path}:{number}: looks like {name}"
-                    if ALLOW_MARKER in line:
-                        if suppressed is not None:
-                            suppressed.append(entry)
-                    else:
-                        failures.append(entry)
+        if text is not None:
+            failures += text_failures(path, text, suppressed)
+    return failures
+
+
+def text_failures(label: str, text: str, suppressed: list[str] | None = None) -> list[str]:
+    """Pattern hits per line, named `label:line`. Hits on lines carrying ALLOW_MARKER go to `suppressed` so a report can still show them."""
+    failures = []
+    for number, line in enumerate(text.splitlines(), start=1):
+        for name, pattern in PATTERNS.items():
+            if any(_finding(name, match) for match in pattern.finditer(line)):
+                entry = f"{label}:{number}: looks like {name}"
+                if ALLOW_MARKER in line:
+                    if suppressed is not None:
+                        suppressed.append(entry)
+                else:
+                    failures.append(entry)
     return failures

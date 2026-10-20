@@ -430,6 +430,22 @@ class VerifyTest(unittest.TestCase):
         self.repo.cli("verify", "--id", "R3")
         self.assertEqual(len(list((self.repo.root / ".ai/runs/R3").glob("verification-*.json"))), 2)
 
+    def test_staged_copy_is_checked_when_the_working_tree_differs(self):
+        self.repo.write("config.txt", "key = '" + "AKIA" + "Q" * 16 + "'\n<<<<<<< ours\n")
+        self.repo.git("add", "config.txt")
+        self.repo.write("config.txt", "key = ''\n")
+        code, report = self.repo.cli("verify", "--id", "t11")
+        self.assertEqual(code, 1)
+        checks = self.checks_by_id(report)
+        self.assertIn("config.txt (staged):1", checks["secret-scan"]["summary"])
+        self.assertIn("staged: config.txt:2", checks["git-diff-check"]["summary"])
+
+        self.repo.write("config.txt", "key = ''\n")
+        self.repo.git("add", "config.txt")
+        self.repo.write("config.txt", "key = ''\nmore\n")
+        code, report = self.repo.cli("verify", "--id", "t12")
+        self.assertEqual(code, 0, report)
+
     def test_repository_without_commits(self):
         fresh = TempRepo(commit=False)
         try:
@@ -446,8 +462,9 @@ class HookTest(unittest.TestCase):
     def tearDown(self):
         self.repo.close()
 
-    def commit(self) -> subprocess.CompletedProcess:
-        self.repo.git("add", "-A")
+    def commit(self, add_all: bool = True) -> subprocess.CompletedProcess:
+        if add_all:
+            self.repo.git("add", "-A")
         return subprocess.run(["git", "commit", "-q", "-m", "change"], cwd=self.repo.root, capture_output=True, text=True,
                               env={**os.environ, checks.SELF_TEST_ENV: "1"})
 
@@ -466,6 +483,19 @@ class HookTest(unittest.TestCase):
         self.repo.write("notes.md", "clean\n")
         self.assertEqual(self.commit().returncode, 0)
         self.assertTrue(list((self.repo.root / ".ai/runs/pre-commit").glob("verification-*.json")))
+
+    def test_hook_checks_the_staged_copy_and_allows_staging_in_part(self):
+        self.repo.cli("hooks", "install")
+        self.repo.write("config.txt", "key = '" + "AKIA" + "Q" * 16 + "'\n")
+        self.repo.git("add", "config.txt")
+        self.repo.write("config.txt", "key = ''\n")
+        self.assertNotEqual(self.commit(add_all=False).returncode, 0)
+        self.assertEqual(self.repo.git("rev-list", "--count", "HEAD").strip(), "1")
+
+        self.repo.git("add", "config.txt")
+        self.repo.write("config.txt", "key = ''\nnot staged\n")
+        self.assertEqual(self.commit(add_all=False).returncode, 0)
+        self.assertEqual(self.repo.git("show", "HEAD:config.txt"), "key = ''\n")
 
     def test_other_tools_hooks_stay_in_effect(self):
         hook = Path(self.repo.git("rev-parse", "--git-path", "hooks").strip())

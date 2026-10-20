@@ -5,7 +5,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from .paths import RUNS_DIR, HarnessError, ToolMissing
+from .paths import RUNS_DIR, HarnessError, ToolMissing, decode_text_or_none
 
 # Diffing against the empty tree lets a repository without any commit be verified.
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
@@ -73,6 +73,25 @@ def changed_files(root: Path, base: str) -> list[str]:
     files.update(_paths(git(root, "diff", "--cached", *common)))
     files.update(untracked_files(root))
     return sorted(path for path in files if not path.startswith(RUNS_DIR + "/"))
+
+
+def staged_differences(root: Path) -> list[str]:
+    """Staged paths whose index copy differs from the working tree: staged in part, or edited or deleted after staging.
+
+    A commit takes each file from the index, or with -a or pathspecs from the working tree. Checking both copies
+    of these paths covers either, while the paths are still staged in part.
+    """
+    staged = _paths(git(root, "diff", "--cached", "--name-only", "-z", "--no-renames", "--diff-filter=ACM", diff_base(root), "--"))
+    unstaged = set(_paths(git(root, "diff", "--name-only", "-z", "--no-renames")))
+    return sorted(path for path in staged if path in unstaged and not path.startswith(RUNS_DIR + "/"))
+
+
+def staged_text(root: Path, path: str, limit: int = 2_000_000) -> str | None:
+    """Text of the index copy of `path`, or None for binaries, oversized blobs, and unmerged paths."""
+    process = subprocess.run(["git", "cat-file", "blob", f":{path}"], cwd=root, capture_output=True)
+    if process.returncode != 0 or len(process.stdout) > limit:
+        return None
+    return decode_text_or_none(process.stdout)
 
 
 def all_files(root: Path) -> list[str]:

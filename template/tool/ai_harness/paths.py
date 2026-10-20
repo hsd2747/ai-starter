@@ -89,6 +89,10 @@ def read_text_or_none(path: Path, limit: int = 2_000_000) -> str | None:
         data = path.read_bytes()
     except OSError:
         return None
+    return decode_text_or_none(data)
+
+
+def decode_text_or_none(data: bytes) -> str | None:
     if b"\0" in data[:8192]:
         return None
     return data.decode("utf-8", errors="replace")
