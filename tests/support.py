@@ -18,10 +18,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tool"))
 
-from ai_starter import cli, files, merge, paths  # noqa: E402
+from ai_starter import cli, files, merge, paths, policy  # noqa: E402
 from ai_starter.registry import REGISTRY_ENV  # noqa: E402
 
-__all__ = ["cli", "files", "merge", "paths", "run", "snapshot", "work_tree", "leftovers", "git_repo", "git", "commit_all",
+__all__ = ["cli", "files", "merge", "paths", "policy", "run", "snapshot", "work_tree", "leftovers", "git_repo", "git", "commit_all",
            "WorkspaceCase", "UpgradeCase"]
 
 

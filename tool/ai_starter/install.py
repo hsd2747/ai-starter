@@ -9,13 +9,13 @@ from pathlib import Path
 from . import paths
 from .files import Staging, file_hash, read_json
 from .manifests import manifest_bytes
+from .merge import pattern_lines, with_lines
 from .paths import HARNESS_RECORD
-
-# Existing repositories usually have these already; harness lines are appended instead of reported as a conflict.
-MERGED_ON_ADOPT = {".gitignore", ".gitattributes"}
+from .policy import Policy, policy_for
 
 
 def install(repo: Path, files: list[str], mode: str, version: dict) -> list[str]:
+    """Copies `files` from the template into `repo`. An existing file is allowed only where the policy appends lines to it."""
     record = {
         "schemaVersion": 1,
         "starter": version,
@@ -26,7 +26,7 @@ def install(repo: Path, files: list[str], mode: str, version: dict) -> list[str]
     merged = []
     with Staging() as stage:
         for relative in files:
-            if relative in MERGED_ON_ADOPT and os.path.lexists(repo / relative):
+            if policy_for(relative, mode) is Policy.APPEND_LINES and os.path.lexists(repo / relative):
                 text = _with_missing_lines(paths.TEMPLATE / relative, repo / relative)
                 if text is not None:
                     stage.write(repo / relative, text.encode("utf-8"))
@@ -35,15 +35,6 @@ def install(repo: Path, files: list[str], mode: str, version: dict) -> list[str]
             stage.copy(paths.TEMPLATE / relative, repo / relative)
         stage.write(repo / HARNESS_RECORD, manifest_bytes(repo / HARNESS_RECORD, "harness", record))
     return merged
-
-
-def pattern_lines(text: str) -> list[str]:
-    return [line for line in text.splitlines() if line.strip() and not line.startswith("#")]
-
-
-def with_lines(existing: str, missing: list[str]) -> str:
-    separator = "" if existing.endswith("\n") or not existing else "\n"
-    return existing + separator + "\n# ai-starter harness\n" + "\n".join(missing) + "\n"
 
 
 def _with_missing_lines(source: Path, dest: Path) -> str | None:

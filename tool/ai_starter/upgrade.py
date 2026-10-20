@@ -7,30 +7,94 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
 from . import paths
 from .files import Staging, file_hash, tree_files
 from .gitutil import git_ok, starter_version
-from .install import MERGED_ON_ADOPT, pattern_lines, with_lines
 from .manifests import load_manifest, manifest_bytes, manifest_errors
-from .merge import merge_json, merge_text, merge_with_blocks
+from .merge import merge_file
 from .paths import GUARD_DIR, HARNESS_RECORD, WORKSPACE_FILE, StarterError, resolve_workspace
+from .policy import policy_for
 from .registry import remember_workspace
 from .workspace import guard_files, load_workspace
 
-# Seeds: installed once, then written by the repository. upgrade replaces only an untouched copy and never merges into one.
-PROJECT_OWNED = {"wiki/index.md", "wiki/log.md"}
+
+@dataclass(frozen=True)
+class Content:
+    kind: str
+    """"file" or "link"."""
+    data: bytes
+    """The file's bytes, or the link target."""
+
+    @property
+    def mergeable(self) -> bool:
+        return self.kind == "file" and b"\0" not in self.data
 
 
-Content = tuple  # ("file", bytes) or ("link", bytes of the link target)
+@dataclass
+class Write:
+    content: Content
+    source: str
+    """Starter path whose permission bits the written file takes."""
+
+
+@dataclass
+class Plan:
+    """What an upgrade does to one target's files, computed without writing."""
+
+    writes: dict[str, Write] = field(default_factory=dict)
+    owned: set[str] = field(default_factory=set)
+    """Paths the starter has installed once the plan is applied; the new version record lists them."""
+    updated: list[str] = field(default_factory=list)
+    merged: list[str] = field(default_factory=list)
+    conflicts: list[str] = field(default_factory=list)
+    kept: list[dict] = field(default_factory=list)
+    added: list[str] = field(default_factory=list)
+    skipped: list[dict] = field(default_factory=list)
+    removed_upstream: list[str] = field(default_factory=list)
+
+    def skip(self, rel: str, reason: str) -> None:
+        self.skipped.append({"path": rel, "reason": reason})
+
+    def report(self) -> dict:
+        return {"updated": self.updated, "merged": self.merged, "conflicts": self.conflicts, "kept": self.kept,
+                "added": self.added, "skipped": self.skipped, "removedUpstream": self.removed_upstream}
+
+
+@dataclass
+class Target:
+    """A workspace root or a repository: why it cannot be upgraded, or its plan and the version record to write with it."""
+
+    name: str
+    root: Path
+    record_path: Path
+    record_kind: str
+    commit: str | None = None
+    blockers: list[str] = field(default_factory=list)
+    warning: str | None = None
+    up_to_date: bool | None = None
+    plan: Plan | None = None
+    record: dict | None = None
+
+    def report(self) -> dict:
+        report = {"target": self.name, "path": str(self.root), "from": self.commit, "blockers": self.blockers}
+        if self.up_to_date is not None:
+            report["upToDate"] = self.up_to_date
+        if self.warning:
+            report["warning"] = self.warning
+        if self.plan is not None:
+            report.update(self.plan.report())
+        return report
 
 
 def _disk(path: Path) -> Content | None:
     if path.is_symlink():
-        return ("link", os.readlink(path).encode())
-    return ("file", path.read_bytes()) if path.is_file() else None
+        return Content("link", os.readlink(path).encode())
+    return Content("file", path.read_bytes()) if path.is_file() else None
 
 
 def _starter_listing(commit: str) -> dict[str, tuple[str, str]]:
@@ -48,94 +112,84 @@ def _starter_listing(commit: str) -> dict[str, tuple[str, str]]:
     return listing
 
 
+def _listing(listings: dict, commit: str) -> dict[str, tuple[str, str]]:
+    if commit not in listings:
+        listings[commit] = _starter_listing(commit)
+    return listings[commit]
+
+
 def _blob(listing: dict[str, tuple[str, str]], source: str) -> Content | None:
     if source not in listing:
         return None
     mode, blob = listing[source]
     data = subprocess.run(["git", "cat-file", "blob", blob], cwd=paths.STARTER, capture_output=True, check=True).stdout
-    return ("link" if mode == "120000" else "file", data)
+    return Content("link" if mode == "120000" else "file", data)
 
 
-def plan_upgrade(root: Path, label: str, owned: set[str], sources: dict[str, str], base_source, listing: dict,
-                 append_only: set[str] = frozenset()) -> dict:
+def plan_upgrade(root: Path, label: str, mode: str, owned: set[str], sources: dict[str, str],
+                 base_source: Callable[[str], str], listing: dict) -> Plan:
     """What an upgrade does to one target, computed without writing.
 
-    `owned` are the destination paths the starter installed at the recorded commit, `sources` maps every destination path
-    the starter ships now to its starter path, and `base_source` maps a destination path to its starter path at that commit.
+    `mode` is how the target got its harness (see policy_for). `owned` are the destination paths the starter installed at the
+    recorded commit, `sources` maps every destination path the starter ships now to its starter path, and `base_source` maps
+    a destination path to its starter path at that commit.
     """
-    plan: dict = {"writes": {}, "owned": set(), "updated": [], "merged": [], "conflicts": [], "kept": [], "added": [], "skipped": [],
-                  "removedUpstream": []}
+    plan = Plan()
     for rel in sorted(owned | sources.keys()):
         ours = _disk(root / rel)
         if rel not in sources:
             if ours is not None:
-                plan["removedUpstream"].append(rel)
+                plan.removed_upstream.append(rel)
             continue
-        theirs = _disk(paths.STARTER / sources[rel])
+        source = sources[rel]
+        theirs = _disk(paths.STARTER / source)
         base = _blob(listing, base_source(rel)) if rel in owned else None
         if rel in owned or ours == theirs:
-            plan["owned"].add(rel)
+            plan.owned.add(rel)
         if ours == theirs or (base is not None and base == theirs):
             continue
         if rel not in owned:
             if ours is None:
-                plan["writes"][rel] = (theirs, sources[rel])
-                plan["added"].append(rel)
-                plan["owned"].add(rel)
+                plan.writes[rel] = Write(theirs, source)
+                plan.added.append(rel)
+                plan.owned.add(rel)
             else:
-                plan["skipped"].append({"path": rel, "reason": "new in the starter but a different file already exists here; merge by hand"})
+                plan.skip(rel, "new in the starter but a different file already exists here; merge by hand")
             continue
         if base is None:
-            plan["skipped"].append({"path": rel, "reason": "not in the recorded starter commit, so there is no base to merge from"})
+            plan.skip(rel, "not in the recorded starter commit, so there is no base to merge from")
         elif ours is None:
-            plan["skipped"].append({"path": rel, "reason": "deleted here but changed in the starter; restore it by hand if it is still wanted"})
+            plan.skip(rel, "deleted here but changed in the starter; restore it by hand if it is still wanted")
         elif ours == base:
-            plan["writes"][rel] = (theirs, sources[rel])
-            plan["updated"].append(rel)
-        elif rel in PROJECT_OWNED:
-            plan["skipped"].append({"path": rel, "reason": "the target writes this file after install; compare it with the starter's copy by hand"})
-        elif "link" in (ours[0], base[0], theirs[0]) or any(b"\0" in c[1] for c in (ours, base, theirs)):
-            plan["skipped"].append({"path": rel, "reason": "changed both here and in the starter, and it is a link or binary; merge by hand"})
-        elif rel in append_only:
-            present = {line.strip() for line in ours[1].decode().splitlines()}
-            installed = {line.strip() for line in base[1].decode().splitlines()}
-            missing = [line for line in pattern_lines(theirs[1].decode()) if line.strip() not in installed | present]
-            if missing:
-                plan["writes"][rel] = (("file", with_lines(ours[1].decode(), missing).encode()), sources[rel])
-                plan["merged"].append(rel)
-        elif rel.endswith(".json") and (outcome := merge_json(rel, ours[1], base[1], theirs[1])) is not None:
-            if isinstance(outcome, str):
-                plan["skipped"].append({"path": rel, "reason": outcome})
-                continue
-            data, kept = outcome
-            if data is not None:
-                plan["writes"][rel] = (("file", data), sources[rel])
-                plan["merged"].append(rel)
-            if kept:
-                plan["kept"].append({"path": rel, "keys": kept})
+            plan.writes[rel] = Write(theirs, source)
+            plan.updated.append(rel)
+        elif not (ours.mergeable and base.mergeable and theirs.mergeable):
+            plan.skip(rel, "changed both here and in the starter, and it is a link or binary; merge by hand")
         else:
-            outcome = merge_with_blocks(ours[1], base[1], theirs[1], label) or merge_text(ours[1], base[1], theirs[1], label)
-            if isinstance(outcome, str):
-                plan["skipped"].append({"path": rel, "reason": outcome})
+            result = merge_file(policy_for(rel, mode), rel, ours.data, base.data, theirs.data, label)
+            if result.skip:
+                plan.skip(rel, result.skip)
                 continue
-            merged, conflicts = outcome
-            plan["writes"][rel] = (("file", merged), sources[rel])
-            plan["conflicts" if conflicts else "merged"].append(rel)
+            if result.data is not None:
+                plan.writes[rel] = Write(Content("file", result.data), source)
+                (plan.conflicts if result.conflicts else plan.merged).append(rel)
+            if result.kept:
+                plan.kept.append({"path": rel, "keys": result.kept})
     return plan
 
 
-def _dirty(root: Path, paths: list[str]) -> list[str]:
-    output = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--", *paths], cwd=root,
+def _dirty(root: Path, rels: list[str]) -> list[str]:
+    output = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--", *rels], cwd=root,
                             capture_output=True, text=True).stdout
     return sorted(line[3:] for line in output.splitlines())
 
 
-def _stage_writes(stage: Staging, root: Path, writes: dict[str, tuple[Content, str]]) -> None:
-    for rel, ((kind, data), source) in writes.items():
-        if kind == "link":
-            stage.link(root / rel, data.decode())
+def _stage_writes(stage: Staging, root: Path, writes: dict[str, Write]) -> None:
+    for rel, write in writes.items():
+        if write.content.kind == "link":
+            stage.link(root / rel, write.content.data.decode())
         else:
-            stage.write(root / rel, data, mode_from=paths.STARTER / source)
+            stage.write(root / rel, write.content.data, mode_from=paths.STARTER / write.source)
 
 
 def _guard_dest(source: str) -> str | None:
@@ -151,71 +205,64 @@ def _workspace_source(rel: str) -> str:
     return f"template/tool/{rel.removeprefix(GUARD_DIR + '/')}" if rel.startswith(GUARD_DIR + "/") else f"workspace-template/{rel}"
 
 
-def _target_report(name: str, root: Path, commit: str | None) -> dict:
-    return {"target": name, "path": str(root), "from": commit, "blockers": []}
-
-
-def _check_base(report: dict, commit: str | None, version: dict) -> bool:
+def _check_base(target: Target, version: dict) -> bool:
+    """Whether the recorded commit can serve as the merge base and the target is behind the starter HEAD."""
+    commit = target.commit
     if not commit:
-        report["blockers"].append("no starter commit is recorded, so there is no base to merge from; upgrade it by hand")
+        target.blockers.append("no starter commit is recorded, so there is no base to merge from; upgrade it by hand")
     elif not git_ok(paths.STARTER, "cat-file", "-e", f"{commit}^{{commit}}"):
-        report["blockers"].append(f"the recorded starter commit {commit[:12]} is not in this starter's history")
+        target.blockers.append(f"the recorded starter commit {commit[:12]} is not in this starter's history")
     elif not git_ok(paths.STARTER, "merge-base", "--is-ancestor", commit, version["commit"]):
-        report["blockers"].append(f"the recorded starter commit {commit[:12]} is not an ancestor of the starter HEAD")
+        target.blockers.append(f"the recorded starter commit {commit[:12]} is not an ancestor of the starter HEAD")
     else:
-        report["upToDate"] = commit == version["commit"]
-        return not report["upToDate"]
+        target.up_to_date = commit == version["commit"]
+        return not target.up_to_date
     return False
 
 
-def _finish_plan(report: dict, root: Path, plan: dict, record: str) -> None:
-    for key in ("updated", "merged", "conflicts", "kept", "added", "skipped", "removedUpstream"):
-        report[key] = plan[key]
-    dirty = _dirty(root, [*plan["writes"], record])
+def _attach_plan(target: Target, plan: Plan) -> None:
+    target.plan = plan
+    dirty = _dirty(target.root, [*plan.writes, target.record_path.relative_to(target.root).as_posix()])
     if dirty:
-        report["blockers"].append(f"commit or stash these first so the upgrade arrives as its own reviewable change: {dirty}")
+        target.blockers.append(f"commit or stash these first so the upgrade arrives as its own reviewable change: {dirty}")
 
 
-def _plan_repository(workspace: Path, repo: dict, version: dict, listings: dict) -> tuple[dict, dict | None]:
+def _plan_repository(workspace: Path, repo: dict, version: dict, listings: dict) -> Target:
     root = workspace / repo["path"]
-    record_path = root / HARNESS_RECORD
-    report = _target_report(repo["name"], root, None)
-    if not record_path.is_file():
-        report["blockers"].append(f"{HARNESS_RECORD} is missing")
-        return report, None
+    target = Target(repo["name"], root, root / HARNESS_RECORD, "harness")
+    if not target.record_path.is_file():
+        target.blockers.append(f"{HARNESS_RECORD} is missing")
+        return target
     try:
-        record = load_manifest(record_path, "harness")
+        record = load_manifest(target.record_path, "harness")
     except StarterError as error:
-        report["blockers"].append(str(error))
-        return report, None
-    commit = report["from"] = record["starter"]["commit"]
-    if not _check_base(report, commit, version):
-        return report, None
+        target.blockers.append(str(error))
+        return target
+    target.commit = record["starter"]["commit"]
+    if not _check_base(target, version):
+        return target
     if record["starter"]["dirty"]:
-        report["warning"] = "it was installed from a starter with uncommitted template changes; review the merged files closely"
-    listing = listings.setdefault(commit, _starter_listing(commit))
+        target.warning = "it was installed from a starter with uncommitted template changes; review the merged files closely"
     sources = {rel: f"template/{rel}" for rel in tree_files(paths.TEMPLATE)}
-    append_only = MERGED_ON_ADOPT if record["mode"] == "adopt" else set()
-    plan = plan_upgrade(root, repo["name"], set(record["files"]), sources, lambda rel: f"template/{rel}", listing, append_only)
-    _finish_plan(report, root, plan, HARNESS_RECORD)
-    record = {**record, "starter": version, "upgradedAt": date.today().isoformat(),
-              "files": {rel: file_hash(paths.TEMPLATE / rel) for rel in sorted(plan["owned"])}}
-    return report, {"root": root, "plan": plan, "record_path": record_path, "record_kind": "harness", "record": record}
+    plan = plan_upgrade(root, repo["name"], record["mode"], set(record["files"]), sources, lambda rel: f"template/{rel}",
+                        _listing(listings, target.commit))
+    _attach_plan(target, plan)
+    target.record = {**record, "starter": version, "upgradedAt": date.today().isoformat(),
+                     "files": {rel: file_hash(paths.TEMPLATE / rel) for rel in sorted(plan.owned)}}
+    return target
 
 
-def _plan_workspace(workspace: Path, manifest: dict, version: dict, listings: dict) -> tuple[dict, dict | None]:
-    commit = manifest["starter"]["commit"]
-    report = _target_report("workspace", workspace, commit)
-    if not _check_base(report, commit, version):
-        return report, None
-    listing = listings.setdefault(commit, _starter_listing(commit))
+def _plan_workspace(workspace: Path, manifest: dict, version: dict, listings: dict) -> Target:
+    target = Target("workspace", workspace, workspace / WORKSPACE_FILE, "workspace", commit=manifest["starter"]["commit"])
+    if not _check_base(target, version):
+        return target
+    listing = _listing(listings, target.commit)
     owned = {dest for dest in map(_guard_dest, listing) if dest}
     sources = {rel: f"workspace-template/{rel}" for rel in tree_files(paths.WORKSPACE_TEMPLATE)}
     sources.update({f"{GUARD_DIR}/{rel}": f"template/tool/{rel}" for rel in guard_files()})
-    plan = plan_upgrade(workspace, "workspace", owned, sources, _workspace_source, listing)
-    _finish_plan(report, workspace, plan, WORKSPACE_FILE)
-    return report, {"root": workspace, "plan": plan, "record_path": workspace / WORKSPACE_FILE, "record_kind": "workspace",
-                    "record": {**manifest, "starter": version}}
+    _attach_plan(target, plan_upgrade(workspace, "workspace", "workspace", owned, sources, _workspace_source, listing))
+    target.record = {**manifest, "starter": version}
+    return target
 
 
 def run(workspace_path: str, names: list[str], dry_run: bool) -> dict:
@@ -236,30 +283,30 @@ def run(workspace_path: str, names: list[str], dry_run: bool) -> dict:
             raise StarterError(f"{name!r} is registered without the harness; install it with `adopt --install` instead.")
 
     listings: dict = {}
-    planned = [_plan_workspace(workspace, manifest, version, listings)] if not names else []
-    targets = names or [r["name"] for r in manifest["repos"] if r["kind"] == "managed"]
-    planned += [_plan_repository(workspace, repos[name], version, listings) for name in targets]
-    for report, work in planned:
-        if work:
-            report["blockers"] += [f"the updated {work['record_path'].name} would be invalid: {error}"
-                                   for error in manifest_errors(work["record_kind"], work["record"])]
-    reports = [report for report, _ in planned]
-    blocked = [f"{r['target']}: {b}" for r in reports for b in r["blockers"]]
+    targets = [_plan_workspace(workspace, manifest, version, listings)] if not names else []
+    chosen = names or [r["name"] for r in manifest["repos"] if r["kind"] == "managed"]
+    targets += [_plan_repository(workspace, repos[name], version, listings) for name in chosen]
+    for target in targets:
+        if target.record is not None:
+            target.blockers += [f"the updated {target.record_path.name} would be invalid: {error}"
+                                for error in manifest_errors(target.record_kind, target.record)]
+    blocked = [f"{t.name}: {blocker}" for t in targets for blocker in t.blockers]
     if blocked and not dry_run:
         raise StarterError("Nothing was written. " + " | ".join(blocked))
 
     if not dry_run:
         with Staging() as stage:
-            for _, work in planned:
-                if work:
-                    _stage_writes(stage, work["root"], work["plan"]["writes"])
-                    stage.write(work["record_path"], manifest_bytes(work["record_path"], work["record_kind"], work["record"]))
-    conflicts = [f"{r['path']}/{c}" for r in reports for c in r.get("conflicts", [])]
-    result = {"ok": True, "dryRun": dry_run, "starter": version, "targets": reports,
-              "warnings": [f"{r['target']}: {r['warning']}" for r in reports if r.get("warning")]}
+            for target in targets:
+                if target.plan is not None:
+                    _stage_writes(stage, target.root, target.plan.writes)
+                    stage.write(target.record_path, manifest_bytes(target.record_path, target.record_kind, target.record))
+    result = {"ok": True, "dryRun": dry_run, "starter": version, "targets": [t.report() for t in targets],
+              "warnings": [f"{t.name}: {t.warning}" for t in targets if t.warning]}
     if not dry_run:
         result["warnings"] += remember_workspace(workspace)
-        kept = [f"{r['path']}/{k['path']}" for r in reports for k in r.get("kept", [])]
+        planned = [t for t in targets if t.plan is not None]
+        conflicts = [f"{t.root}/{rel}" for t in planned for rel in t.plan.conflicts]
+        kept = [f"{t.root}/{entry['path']}" for t in planned for entry in t.plan.kept]
         result["next"] = ("Resolve the conflict markers in: " + ", ".join(conflicts) + ". " if conflicts else "") + \
             ("Each target kept its own value for the JSON keys under kept; compare them with the starter's in: " + ", ".join(kept) + ". "
              if kept else "") + \

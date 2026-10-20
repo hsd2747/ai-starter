@@ -13,9 +13,10 @@ from pathlib import Path
 from . import paths, upgrade
 from .files import tree_files
 from .gitutil import git, init_repo, starter_version, version_warnings
-from .install import MERGED_ON_ADOPT, base_branch, install
+from .install import base_branch, install
 from .manifests import write_manifest
 from .paths import HARNESS_RECORD, WORKSPACE_FILE, StarterError, relative_path, resolve_workspace
+from .policy import Policy, policy_for
 from .registry import describe_workspace, load_registry, registry_path, remember_workspace
 from .workspace import check_new_entry, check_workspace_free, ensure_workspace, load_workspace, register, registered_only, sync_agents
 
@@ -102,7 +103,7 @@ def cmd_adopt(args: argparse.Namespace) -> dict:
         raise StarterError(f"{repo} is not a git repository.")
     files = tree_files(paths.TEMPLATE)
     if args.install:
-        conflicts = [f for f in files if f not in MERGED_ON_ADOPT and os.path.lexists(repo / f)]
+        conflicts = [f for f in files if policy_for(f, "adopt") is not Policy.APPEND_LINES and os.path.lexists(repo / f)]
         if os.path.lexists(repo / HARNESS_RECORD):
             conflicts.append(HARNESS_RECORD)
         if conflicts:
