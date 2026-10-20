@@ -8,11 +8,17 @@ This repository is ai-starter, a generator. It is never onboarded and holds no p
   **generated** repositories. They do not govern work on this starter, even when a tool loads them while you edit files under
   `template/` (for example the `template:repo-*` skills or the onboarding gate in `template/AGENTS.md`).
 - `workspace-template/`: files for a workspace root: `AGENTS.md` with a generated repository table, `CLAUDE.md`, a whitelist `.gitignore`, and the guard hook settings.
-- `tool/starter.py`: the generator (`new`, `adopt`). Python 3.10+, standard library only.
+- `tool/starter.py`: the generator's entry point (`new`, `adopt`, `sync`, `upgrade`, `workspace`). Python 3.10+, standard library only.
+- `tool/ai_starter/`: the generator's code. `cli.py` parses commands and runs all of them except `upgrade.py`; `workspace.py`, `install.py`,
+  and `registry.py` write workspaces, harness copies, and the saved list; `merge.py` merges one file; `manifests.py` validates state files;
+  `files.py`, `gitutil.py`, and `paths.py` hold the shared helpers. Read `paths.STARTER`, `paths.TEMPLATE`, and `paths.WORKSPACE_TEMPLATE`
+  as attributes, never import them by name: tests point them at a throwaway copy of the starter.
 - `tool/schemas/`: schemas of the files the generator keeps state in (`workspace.json`, `.ai/harness.json`, the saved workspace list).
   They are checked with `template/tool/ai_harness/schema.py`, so they use only the keywords it supports.
 - `tool/ai.py`: the guard hook entry for sessions in this starter; it delegates to `template/tool/ai_harness/guard.py`.
-- `tests/`: generator tests.
+- `tests/`: generator tests, one file per command (`test_new.py`, `test_upgrade.py`, ...). `support.py` holds the shared helpers and
+  the two base cases: `WorkspaceCase` (a temporary workspace) and `UpgradeCase` (a throwaway starter copy whose template can change).
+  Test files import the generator through `support`, which puts `tool/` on the path.
 - `.claude/skills/starter-*`: conversational wrappers around the generator (`starter-new-repo`, `starter-onboard-repo`, `starter-adopt-repo`,
   `starter-workspace`). When one of them works inside a generated repository, that repository's `AGENTS.md` rules there.
 
@@ -25,8 +31,8 @@ This repository is ai-starter, a generator. It is never onboarded and holds no p
 - The generator writes only inside the workspace it is given, plus the saved workspace list `~/.claude/ai-starter/workspaces.json`
   that the starter skills read. It never writes into this starter, never overwrites an existing file, and validates everything before
   its first write. `tests/` pins these rules and redirects the list with `AI_STARTER_REGISTRY`; keep them passing.
-- Every file the generator writes goes through `_Staging` (or `_write_atomic` for a single file), never through a direct write,
-  so that a failure leaves its targets as they were. Writes that belong together, such as the files of one command, share one `_Staging`.
+- Every file the generator writes goes through `files.Staging` (or `files.write_atomic` for a single file), never through a direct write,
+  so that a failure leaves its targets as they were. Writes that belong together, such as the files of one command, share one `Staging`.
 - Every read and write of `workspace.json`, `.ai/harness.json`, and the saved workspace list goes through the schemas in `tool/schemas/`.
   A field added to one of these files is added to its schema in the same change; files that existing workspaces already hold must stay valid.
 - `upgrade` is the one command that changes existing files: only files the starter installed, only when git shows every file it
@@ -35,7 +41,7 @@ This repository is ai-starter, a generator. It is never onboarded and holds no p
 - Content that a repository or workspace fills in after install goes between `project:<name>` or `workspace:<name>` start and end markers
   in `template/` and `workspace-template/`, so that `upgrade` keeps it. Never rename or remove a block that onboarding fills:
   `upgrade` skips a file whose filled block the starter no longer has. A template change that raises a JSON `schemaVersion` adds
-  the migration steps to `MIGRATIONS` in `tool/starter.py` in the same commit.
+  the migration steps to `MIGRATIONS` in `tool/ai_starter/merge.py` in the same commit.
 - Generated repositories record the starter commit in `.ai/harness.json`. Commit starter changes before creating repositories that will be kept.
 - Commit and push only when the user asks. Never hardcode secrets, tokens, or connection strings.
 
