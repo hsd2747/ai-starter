@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -13,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import traceback
+import uuid
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
@@ -68,8 +70,9 @@ python3 tool/starter.py <command>
         The saved workspace list (~/.claude/ai-starter/workspaces.json, or $AI_STARTER_REGISTRY), most recent first.
         new, adopt, and sync record their workspace there. remove only forgets the entry; it never touches the folder.
 
-Output is JSON. Exit codes: 0 ok, 1 usage error, conflict, or invalid manifest,
+Output is JSON. Exit codes: 0 ok, 1 usage error, conflict, invalid manifest, or filesystem error,
 2 unexpected error (a starter bug; the report carries the traceback).
+Every write goes to a temporary file first and is moved into place only when all of a command's files are ready.
 """
 
 
@@ -110,13 +113,87 @@ def tree_files(source: Path) -> list[str]:
     return sorted(found)
 
 
-def _copy(source_root: Path, relative: str, dest_root: Path) -> None:
-    source, dest = source_root / relative, dest_root / relative
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if source.is_symlink():
-        os.symlink(os.readlink(source), dest)
-    else:
-        shutil.copy2(source, dest)
+class _Staging:
+    """Collects writes as temporary files beside their destinations and moves them into place only on a clean exit.
+
+    A failure while collecting removes the temporary files and leaves every destination as it was. Moving in is one
+    rename per file, so it can only stop between two files, and the error then names the files already replaced.
+    """
+
+    def __init__(self) -> None:
+        self._pending: list[tuple[Path, Path]] = []
+        self._new_dirs: list[Path] = []
+
+    def __enter__(self) -> _Staging:
+        return self
+
+    def __exit__(self, kind, error, trace) -> bool:
+        if kind is None:
+            self._commit()
+        else:
+            self._discard()
+        return False
+
+    def _temp(self, dest: Path) -> Path:
+        missing = []
+        for directory in [dest.parent, *dest.parent.parents]:
+            if os.path.lexists(directory):
+                break
+            missing.append(directory)
+        for directory in reversed(missing):
+            directory.mkdir()
+            self._new_dirs.append(directory)
+        temp = dest.with_name(f".{dest.name}.{uuid.uuid4().hex[:12]}.starter-tmp")
+        self._pending.append((temp, dest))
+        return temp
+
+    def write(self, dest: Path, data: bytes, mode_from: Path | None = None) -> None:
+        """`mode_from` gives the permission bits; by default an existing regular file at `dest` keeps its own."""
+        mode_from = mode_from or (dest if dest.is_file() and not dest.is_symlink() else None)
+        temp = self._temp(dest)
+        with open(temp, "xb") as handle:
+            handle.write(data)
+        if mode_from is not None:
+            shutil.copymode(mode_from, temp)
+
+    def link(self, dest: Path, target: str) -> None:
+        os.symlink(target, self._temp(dest))
+
+    def copy(self, source: Path, dest: Path) -> None:
+        if source.is_symlink():
+            self.link(dest, os.readlink(source))
+        else:
+            shutil.copy2(source, self._temp(dest))
+
+    def _discard(self) -> None:
+        for temp, _ in self._pending:
+            if os.path.lexists(temp):
+                temp.unlink()
+        for directory in reversed(self._new_dirs):
+            with contextlib.suppress(OSError):
+                directory.rmdir()
+        self._pending, self._new_dirs = [], []
+
+    def _commit(self) -> None:
+        done: list[str] = []
+        try:
+            for temp, dest in self._pending:
+                if dest.is_dir() and not dest.is_symlink():
+                    raise IsADirectoryError(f"{dest} is a directory")
+                os.replace(temp, dest)
+                done.append(str(dest))
+        except OSError as error:
+            left = [str(dest) for _, dest in self._pending[len(done):]]
+            self._pending = self._pending[len(done):]
+            self._discard()
+            raise StarterError(f"Stopped while moving files into place ({error}). Replaced: {done or 'none'}. "
+                               f"Not replaced: {left}. The replaced files are complete; nothing else was changed.") from None
+        self._pending, self._new_dirs = [], []
+
+
+def _write_atomic(path: Path, data: bytes) -> None:
+    with _Staging() as stage:
+        stage.write(path, data)
 
 
 def file_hash(path: Path) -> str:
@@ -150,9 +227,8 @@ def _read_json(path: Path) -> dict:
         raise StarterError(f"Cannot read {path}: {error}") from None
 
 
-def _write_json(path: Path, value: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+def _json_bytes(value: dict) -> bytes:
+    return (json.dumps(value, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 
 def _resolve_workspace(raw: str) -> Path:
@@ -202,11 +278,15 @@ def _load_manifest(path: Path, kind: str) -> dict:
     return value
 
 
-def _write_manifest(path: Path, kind: str, value: dict) -> None:
+def _manifest_bytes(path: Path, kind: str, value: dict) -> bytes:
     errors = manifest_errors(kind, value)
     if errors:
         raise StarterError(f"Refusing to write an invalid {path}: " + "; ".join(errors))
-    _write_json(path, value)
+    return _json_bytes(value)
+
+
+def _write_manifest(path: Path, kind: str, value: dict) -> None:
+    _write_atomic(path, _manifest_bytes(path, kind, value))
 
 
 def _load_workspace(workspace: Path) -> dict | None:
@@ -237,19 +317,19 @@ def ensure_workspace(workspace: Path, version: dict) -> list[str]:
     if (workspace / WORKSPACE_FILE).is_file():
         return []
     workspace.mkdir(parents=True, exist_ok=True)
-    created = []
-    for relative in tree_files(WORKSPACE_TEMPLATE):
-        _copy(WORKSPACE_TEMPLATE, relative, workspace)
-        created.append(relative)
+    # Initialized first: a .git without the files is completed by the next run, files without workspace.json block it.
+    _init_repo(workspace, "main")
+    created = tree_files(WORKSPACE_TEMPLATE)
     # The workspace hook needs the guard without a full harness; the repositories below carry their own copy.
     guard_files = ["ai.py", *(f"ai_harness/{f}" for f in tree_files(TEMPLATE / "tool" / "ai_harness"))]
-    for relative in guard_files:
-        _copy(TEMPLATE / "tool", relative, workspace / GUARD_DIR)
-    created.append(GUARD_DIR + "/")
-    _write_manifest(workspace / WORKSPACE_FILE, "workspace", {"schemaVersion": 1, "starter": version, "repos": []})
-    created.append(WORKSPACE_FILE)
-    _init_repo(workspace, "main")
-    return created
+    manifest = workspace / WORKSPACE_FILE
+    with _Staging() as stage:
+        for relative in created:
+            stage.copy(WORKSPACE_TEMPLATE / relative, workspace / relative)
+        for relative in guard_files:
+            stage.copy(TEMPLATE / "tool" / relative, workspace / GUARD_DIR / relative)
+        stage.write(manifest, _manifest_bytes(manifest, "workspace", {"schemaVersion": 1, "starter": version, "repos": []}))
+    return [*created, GUARD_DIR + "/", WORKSPACE_FILE]
 
 
 def _cell(value: str) -> str:
@@ -265,16 +345,23 @@ def render_repos(repos: list[dict]) -> str:
     return "\n".join(rows)
 
 
-def sync_agents(workspace: Path, repos: list[dict]) -> str | None:
-    """Rewrites the generated table in the workspace AGENTS.md. Returns a warning when the markers are gone."""
+def _agents_with_table(workspace: Path, repos: list[dict]) -> tuple[bytes | None, str | None]:
+    """The workspace AGENTS.md with its generated table rewritten, or a warning when the markers are gone."""
     path = workspace / "AGENTS.md"
     text = path.read_text(encoding="utf-8") if path.is_file() else ""
     start, end = text.find(REPOS_START), text.find(REPOS_END)
     if start == -1 or end < start:
-        return f"{path}: repository markers are missing; the table was not updated. Restore {REPOS_START} and {REPOS_END}."
+        return None, f"{path}: repository markers are missing; the table was not updated. Restore {REPOS_START} and {REPOS_END}."
     body = f"{REPOS_START}\n{render_repos(repos)}\n"
-    path.write_text(text[:start] + body + text[end:], encoding="utf-8")
-    return None
+    return (text[:start] + body + text[end:]).encode("utf-8"), None
+
+
+def sync_agents(workspace: Path, repos: list[dict]) -> str | None:
+    """Rewrites the generated table in the workspace AGENTS.md. Returns a warning when the markers are gone."""
+    data, warning = _agents_with_table(workspace, repos)
+    if data is not None:
+        _write_atomic(workspace / "AGENTS.md", data)
+    return warning
 
 
 def _registered_only(manifest: dict | None, path: str) -> dict | None:
@@ -290,26 +377,33 @@ def register(workspace: Path, entry: dict) -> list[str]:
         repos.append(entry)
     else:
         repos[index] = entry
-    _write_manifest(workspace / WORKSPACE_FILE, "workspace", manifest)
-    warning = sync_agents(workspace, manifest["repos"])
+    agents, warning = _agents_with_table(workspace, repos)
+    with _Staging() as stage:
+        stage.write(workspace / WORKSPACE_FILE, _manifest_bytes(workspace / WORKSPACE_FILE, "workspace", manifest))
+        if agents is not None:
+            stage.write(workspace / "AGENTS.md", agents)
     return [warning] if warning else []
 
 
 def install(repo: Path, files: list[str], mode: str, version: dict) -> list[str]:
-    merged = []
-    for relative in files:
-        if relative in MERGED_ON_ADOPT and os.path.lexists(repo / relative):
-            if _append_missing_lines(TEMPLATE / relative, repo / relative):
-                merged.append(relative)
-            continue
-        _copy(TEMPLATE, relative, repo)
-    _write_manifest(repo / HARNESS_RECORD, "harness", {
+    record = {
         "schemaVersion": 1,
         "starter": version,
         "mode": mode,
         "installedAt": date.today().isoformat(),
         "files": {relative: file_hash(TEMPLATE / relative) for relative in files},
-    })
+    }
+    merged = []
+    with _Staging() as stage:
+        for relative in files:
+            if relative in MERGED_ON_ADOPT and os.path.lexists(repo / relative):
+                text = _with_missing_lines(TEMPLATE / relative, repo / relative)
+                if text is not None:
+                    stage.write(repo / relative, text.encode("utf-8"))
+                    merged.append(relative)
+                continue
+            stage.copy(TEMPLATE / relative, repo / relative)
+        stage.write(repo / HARNESS_RECORD, _manifest_bytes(repo / HARNESS_RECORD, "harness", record))
     return merged
 
 
@@ -322,14 +416,12 @@ def _with_lines(existing: str, missing: list[str]) -> str:
     return existing + separator + "\n# ai-starter harness\n" + "\n".join(missing) + "\n"
 
 
-def _append_missing_lines(source: Path, dest: Path) -> bool:
+def _with_missing_lines(source: Path, dest: Path) -> str | None:
+    """`dest` with the pattern lines of `source` it lacks appended, or None when it lacks none."""
     existing = dest.read_text(encoding="utf-8")
     present = {line.strip() for line in existing.splitlines()}
     missing = [line for line in _pattern_lines(source.read_text(encoding="utf-8")) if line.strip() not in present]
-    if not missing:
-        return False
-    dest.write_text(_with_lines(existing, missing), encoding="utf-8")
-    return True
+    return _with_lines(existing, missing) if missing else None
 
 
 def registry_path() -> Path:
@@ -615,17 +707,12 @@ def _dirty(root: Path, paths: list[str]) -> list[str]:
     return sorted(line[3:] for line in output.splitlines())
 
 
-def _apply(root: Path, writes: dict[str, tuple[Content, str]]) -> None:
+def _stage_writes(stage: _Staging, root: Path, writes: dict[str, tuple[Content, str]]) -> None:
     for rel, ((kind, data), source) in writes.items():
-        dest = root / rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        if dest.is_symlink() or (kind == "link" and os.path.lexists(dest)):
-            dest.unlink()
         if kind == "link":
-            os.symlink(data.decode(), dest)
+            stage.link(root / rel, data.decode())
         else:
-            dest.write_bytes(data)
-            shutil.copymode(STARTER / source, dest)
+            stage.write(root / rel, data, mode_from=STARTER / source)
 
 
 def _guard_dest(source: str) -> str | None:
@@ -719,13 +806,23 @@ def cmd_new(args: argparse.Namespace) -> dict:
     _check_workspace_free(workspace)
 
     version = starter_version()
-    created = ensure_workspace(workspace, version)
-    target.mkdir(parents=True, exist_ok=True)
     files = tree_files(TEMPLATE)
-    install(target, files, "new", version)
-    _init_repo(target, _base_branch())
-    if args.remote:
-        _git(target, "remote", "add", "origin", args.remote)
+    # Built under a temporary name and renamed whole, so a failure never leaves a half-made repository to block the next run.
+    workspace.mkdir(parents=True, exist_ok=True)
+    building = workspace / f".{args.name}.{uuid.uuid4().hex[:12]}.starter-tmp"
+    building.mkdir()
+    try:
+        install(building, files, "new", version)
+        _init_repo(building, _base_branch())
+        if args.remote:
+            _git(building, "remote", "add", "origin", args.remote)
+        created = ensure_workspace(workspace, version)
+        if target.exists():
+            target.rmdir()
+        building.rename(target)
+    except BaseException:
+        shutil.rmtree(building, ignore_errors=True)
+        raise
     warnings = _version_warnings(version)
     warnings += register(workspace, {"name": args.name, "path": args.name, "role": args.role, "kind": "managed", "remote": args.remote})
     warnings += remember_workspace(workspace)
@@ -823,10 +920,11 @@ def cmd_upgrade(args: argparse.Namespace) -> dict:
         raise StarterError("Nothing was written. " + " | ".join(blocked))
 
     if not args.dry_run:
-        for _, work in planned:
-            if work:
-                _apply(work["root"], work["plan"]["writes"])
-                _write_json(work["record_path"], work["record"])
+        with _Staging() as stage:
+            for _, work in planned:
+                if work:
+                    _stage_writes(stage, work["root"], work["plan"]["writes"])
+                    stage.write(work["record_path"], _manifest_bytes(work["record_path"], work["record_kind"], work["record"]))
     conflicts = [f"{r['path']}/{c}" for r in reports for c in r.get("conflicts", [])]
     result = {"ok": True, "dryRun": args.dry_run, "starter": version, "targets": reports,
               "warnings": [f"{r['target']}: {r['warning']}" for r in reports if r.get("warning")]}
@@ -901,6 +999,9 @@ def main(argv: list[str]) -> int:
         report = {"new": cmd_new, "adopt": cmd_adopt, "sync": cmd_sync, "upgrade": cmd_upgrade, "workspace": cmd_workspace}[args.command](args)
     except StarterError as error:
         print(json.dumps({"ok": False, "error": str(error)}, indent=2, ensure_ascii=False))
+        return 1
+    except OSError as error:
+        print(json.dumps({"ok": False, "kind": "filesystem", "error": str(error)}, indent=2, ensure_ascii=False))
         return 1
     except Exception as error:
         # The skills read this output as JSON; a bug must reach them as a report, not as a bare traceback.

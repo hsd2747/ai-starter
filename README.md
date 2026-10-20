@@ -64,6 +64,10 @@ Three kinds of content are not merged line by line:
 The starter must be committed, and every file `upgrade` would write must be committed and unmodified in its target;
 otherwise nothing is written anywhere. The result arrives as an ordinary uncommitted diff in each repository.
 
+Every command writes its files to temporary files first and moves them into place only once all of them are ready, so a full disk
+or a permission error leaves every target as it was. `new` builds the repository under a temporary name and renames it at the end.
+In the rare case that moving in stops partway, the error lists the files already replaced and the ones that were not.
+
 ## Saved workspaces
 
 `new`, `adopt`, and `sync` save their workspace in `~/.claude/ai-starter/workspaces.json`, most recent first, so the skills below

@@ -25,6 +25,8 @@ This repository is ai-starter, a generator. It is never onboarded and holds no p
 - The generator writes only inside the workspace it is given, plus the saved workspace list `~/.claude/ai-starter/workspaces.json`
   that the starter skills read. It never writes into this starter, never overwrites an existing file, and validates everything before
   its first write. `tests/` pins these rules and redirects the list with `AI_STARTER_REGISTRY`; keep them passing.
+- Every file the generator writes goes through `_Staging` (or `_write_atomic` for a single file), never through a direct write,
+  so that a failure leaves its targets as they were. Writes that belong together, such as the files of one command, share one `_Staging`.
 - Every read and write of `workspace.json`, `.ai/harness.json`, and the saved workspace list goes through the schemas in `tool/schemas/`.
   A field added to one of these files is added to its schema in the same change; files that existing workspaces already hold must stay valid.
 - `upgrade` is the one command that changes existing files: only files the starter installed, only when git shows every file it

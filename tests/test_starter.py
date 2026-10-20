@@ -29,6 +29,14 @@ def snapshot(root: Path) -> dict[str, str]:
     return {f: starter.file_hash(root / f) for f in starter.tree_files(root)} if root.exists() else {}
 
 
+def work_tree(root: Path) -> dict[str, str]:
+    return {f: h for f, h in snapshot(root).items() if not (f.startswith(".git/") or "/.git/" in f)}
+
+
+def leftovers(root: Path) -> list[str]:
+    return [str(p) for p in root.rglob("*.starter-tmp")]
+
+
 def git_repo(path: Path) -> Path:
     path.mkdir(parents=True)
     subprocess.run(["git", "init", "-q"], cwd=path, check=True)
@@ -230,6 +238,20 @@ class StarterTest(unittest.TestCase):
         self.assertEqual(code, 1, report)
         self.assertIn("registry.schema.json", report["error"])
         self.assertIn("'lastUsed'", report["error"])
+
+    def test_failed_new_leaves_nothing_behind(self):
+        real_git = starter._git
+
+        def git_without_remotes(cwd: Path, *args: str, check: bool = True) -> str:
+            if args[:2] == ("remote", "add"):
+                raise starter.StarterError("remote rejected")
+            return real_git(cwd, *args, check=check)
+
+        with mock.patch.object(starter, "_git", git_without_remotes):
+            code, report = run("new", "--workspace", str(self.ws), "--name", "be", "--remote", "git@example.com:team/be.git")
+        self.assertEqual(code, 1, report)
+        self.assertEqual(list(self.ws.iterdir()), [])
+        self.assertEqual(run("new", "--workspace", str(self.ws), "--name", "be")[0], 0)
 
     def test_unexpected_error_is_still_reported_as_json(self):
         with mock.patch.object(starter, "cmd_sync", side_effect=RuntimeError("boom")):
@@ -485,6 +507,47 @@ class UpgradeTest(unittest.TestCase):
         before = snapshot(repo), snapshot(self.ws / ".ai")
         self.assertEqual(run("upgrade", "--workspace", str(self.ws))[0], 1)
         self.assertEqual((snapshot(repo), snapshot(self.ws / ".ai")), before)
+
+    def change_starter_for_both_targets(self) -> None:
+        self.edit(self.fake / "template/tool/ai_harness/guard.py", "MAX_DEPTH = 4", "MAX_DEPTH = 5")
+        self.edit(self.fake / "template/AGENTS.md", "## Goals", "## Goals\n\nNew starter line.")
+        commit_all(self.fake)
+
+    def test_failure_while_preparing_leaves_every_target_untouched(self):
+        self.create()
+        self.change_starter_for_both_targets()
+        real_write = starter._Staging.write
+
+        def full_disk_at_record(stage, dest: Path, data: bytes, mode_from: Path | None = None) -> None:
+            if dest.name == "harness.json":
+                raise OSError(28, "No space left on device")
+            real_write(stage, dest, data, mode_from)
+
+        before = work_tree(self.ws)
+        with mock.patch.object(starter._Staging, "write", full_disk_at_record):
+            code, report = run("upgrade", "--workspace", str(self.ws))
+        self.assertEqual(code, 1, report)
+        self.assertEqual(report["kind"], "filesystem")
+        self.assertEqual(work_tree(self.ws), before)
+        self.assertEqual(leftovers(self.ws), [])
+
+    def test_failure_while_moving_in_names_what_was_replaced(self):
+        self.create()
+        self.change_starter_for_both_targets()
+        real_replace, moved = os.replace, []
+
+        def failing_second_move(source, dest) -> None:
+            moved.append(str(dest))
+            if len(moved) == 2:
+                raise OSError(5, "Input/output error")
+            real_replace(source, dest)
+
+        with mock.patch.object(starter.os, "replace", failing_second_move):
+            code, report = run("upgrade", "--workspace", str(self.ws))
+        self.assertEqual(code, 1, report)
+        self.assertIn(f"Replaced: ['{moved[0]}']", report["error"])
+        self.assertIn(f"Not replaced: ['{moved[1]}'", report["error"])
+        self.assertEqual(leftovers(self.ws), [])
 
     def test_uncommitted_target_file_blocks_every_write(self):
         repo = self.create()
