@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import unittest
 
-from support import UpgradeCase, WorkspaceCase, commit_all, git_repo, run, snapshot, work_tree
+from support import UpgradeCase, WorkspaceCase, commit_all, git, git_repo, run, snapshot, work_tree
 
 
 class HarnessTest(WorkspaceCase):
@@ -48,6 +49,22 @@ class HarnessTest(WorkspaceCase):
         self.assertEqual(report["existingInstructions"], sorted([*expected, "AGENTS.pre-harness.md"]))
         self.assertEqual(run("harness", "status", "--repo", str(repo))[1]["existingInstructions"], report["existingInstructions"])
         self.assertEqual((repo / ".cursorrules").read_text(encoding="utf-8"), "their rules\n")
+
+    def test_install_connects_the_hook_unless_other_hooks_are_in_effect(self):
+        repo = git_repo(self.base / "solo")
+        code, report = run("harness", "install", "--repo", str(repo))
+        self.assertEqual(code, 0, report)
+        self.assertTrue(report["hooks"]["installed"], report)
+        self.assertEqual(git(repo, "config", "core.hooksPath").strip(), ".githooks")
+
+        other = git_repo(self.base / "other")
+        (other / ".git/hooks/pre-commit").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        code, report = run("harness", "install", "--repo", str(other))
+        self.assertEqual(code, 0, report)
+        self.assertFalse(report["hooks"]["ok"])
+        self.assertTrue(any("not connected" in w for w in report["warnings"]), report["warnings"])
+        self.assertTrue((other / ".ai/harness.json").is_file())
+        self.assertEqual(subprocess.run(["git", "config", "core.hooksPath"], cwd=other).returncode, 1)
 
     def test_repository_must_be_a_git_repository_outside_the_starter(self):
         (self.base / "plain").mkdir()

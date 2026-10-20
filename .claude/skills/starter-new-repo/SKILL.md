@@ -44,6 +44,7 @@ python3 tool/starter.py new --workspace <path> --name <name> --role "<role>" [--
 
 The output is JSON. On `"ok": false` nothing was written: show the error and resolve it with the user.
 On success, report the repository path, `workspaceCreated` on the first run, and every entry in `warnings`.
+The pre-commit hook is connected in the new repository, so every commit there runs `verify`; a teammate's clone connects it with `python3 tool/ai.py hooks install`.
 
 ## 5. Next
 

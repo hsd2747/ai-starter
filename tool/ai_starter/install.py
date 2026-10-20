@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
+import subprocess
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -98,3 +101,21 @@ def _with_missing_lines(source: Path, dest: Path) -> str | None:
 
 def base_branch() -> str:
     return read_json(paths.TEMPLATE / ".ai/config.json")["git"]["baseBranch"]
+
+
+def connect_hooks(repo: Path) -> tuple[dict, list[str]]:
+    """Runs the installed harness's `hooks install` in `repo`, after its files are in place and it is a git repository.
+
+    It changes only the repository's local git config, never a file, so it is not staged; when it cannot connect the hook,
+    the files stay installed and the reason becomes a warning.
+    """
+    process = subprocess.run([sys.executable, "tool/ai.py", "hooks", "install"], cwd=repo, capture_output=True, text=True,
+                             env={**os.environ, "AI_HARNESS_ROOT": str(repo)})
+    try:
+        report = json.loads(process.stdout)
+    except json.JSONDecodeError:
+        report = {"ok": False, "problem": f"hooks install did not report: {process.stderr.strip() or process.stdout.strip()}"}
+    if report.get("ok"):
+        return report, []
+    problem = report.get("problem") or report.get("error") or "unknown"
+    return report, [f"The pre-commit verify hook is not connected: {problem}"]

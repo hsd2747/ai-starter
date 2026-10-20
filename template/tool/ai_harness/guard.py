@@ -38,6 +38,8 @@ GIT_CONTENT_READERS = {"show", "diff", "log", "cat-file", "blame", "annotate", "
 GIT_SUMMARY_OPTIONS = {"--stat", "--shortstat", "--numstat", "--name-only", "--name-status", "--no-patch", "--quiet"}
 GIT_PATCH_OPTIONS = {"--patch", "--patch-with-stat", "--patch-with-raw"}
 GIT_PUSH_DELETE_OPTIONS = {"--delete", "--mirror", "--prune"}
+# Short options of `git commit` whose value may follow in the same token or the next one, so a later "n" is not --no-verify.
+GIT_COMMIT_VALUE_FLAGS = set("mFCct")
 
 BROAD_TARGETS = {"/", "/*", "~", "~/", "~/*", "$HOME", "$HOME/", "$HOME/*", ".", "./", "./*", "..", "../", "../*", "*", ".*"}
 FIND_NARROWING = {"-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex"}
@@ -141,6 +143,10 @@ def _git_subcommand(args: list[str]) -> tuple[str | None, list[str]]:
 def _git_reason(args: list[str]) -> str | None:
     sub, rest = _git_subcommand(args)
     flags = _short_flags(rest)
+    if _overrides_hooks_path(args[:len(args) - len(rest)], sub, rest):
+        return "changing core.hooksPath turns off the pre-commit verify hook (hooks-path)."
+    if sub == "commit" and _skips_hooks(rest):
+        return "git commit --no-verify skips the pre-commit verify hook (no-verify)."
     if sub == "push" and ("f" in flags or any(a.startswith("+") or a.split("=")[0] in ("--force", "--force-with-lease") for a in rest)):
         return "force push rewrites shared history (force-push)."
     if sub == "push" and ("d" in flags or any(a.split("=")[0] in GIT_PUSH_DELETE_OPTIONS or (a.startswith(":") and len(a) > 1)
@@ -167,6 +173,40 @@ def _git_reason(args: list[str]) -> str | None:
     if sub == "stash" and rest[:1] in (["drop"], ["clear"]):
         return "dropping a stash loses its changes (stash-drop)."
     return None
+
+
+def _skips_hooks(rest: list[str]) -> bool:
+    value_next = False
+    for arg in rest:
+        if value_next:
+            value_next = False
+            continue
+        if arg == "--":
+            return False
+        if arg == "--no-verify":
+            return True
+        if arg.startswith("-") and not arg.startswith("--"):
+            for i, letter in enumerate(arg[1:], start=1):
+                if letter == "n":
+                    return True
+                if letter in GIT_COMMIT_VALUE_FLAGS:
+                    value_next = i == len(arg) - 1
+                    break
+    return False
+
+
+def _overrides_hooks_path(global_options: list[str], sub: str | None, rest: list[str]) -> bool:
+    """`git -c core.hooksPath=...` for one command, or `git config` writing or removing it. Reading it stays allowed."""
+    if any(option.lower().startswith("core.hookspath") for option in global_options):
+        return True
+    if sub != "config":
+        return False
+    words = [a for a in rest if not a.startswith("-")]
+    keys = [i for i, word in enumerate(words) if word.lower() == "core.hookspath"]
+    if not keys:
+        return False
+    writes = any(a.startswith(("--unset", "--add", "--replace-all", "--remove-section", "--rename-section")) for a in rest)
+    return writes or words[0] in ("set", "unset") or len(words) > keys[0] + 1
 
 
 def _git_env_read(sub: str | None, rest: list[str]) -> bool:

@@ -17,7 +17,7 @@ practice for your stack on the web, and writes the result into the harness after
 | `.gemini/settings.json` | Points Gemini CLI at `AGENTS.md` |
 | `tool/ai.py` | Harness CLI, Python 3.10+ standard library only |
 | `wiki/` | Project knowledge: `current` facts, `rule` contracts with adoption levels, notes, index, and log |
-| `.github/workflows/verify.yml` | CI running the same selector as local `verify` |
+| `.githooks/pre-commit` | Runs `verify` before every commit; `python3 tool/ai.py hooks install` connects it once per clone |
 
 Skills: `repo-onboard`, `repo-change`, `repo-review`, `repo-verify`, `repo-wiki-query`, `repo-wiki-write`.
 
@@ -28,7 +28,7 @@ and `.ai/` holds data that the CLI reads. Approval briefs happen in the conversa
 
 Open this repository in your agent (Claude Code, Codex, Cursor, Gemini CLI, Copilot) and ask it to onboard the project.
 `AGENTS.md` sends every agent to `repo-onboard` while `.ai/config.json` says `"onboarded": false`. Onboarding writes the settings and checks
-in `.ai/config.json`, the repository map in `AGENTS.md`, the first architecture pages in `wiki/`, and the CI toolchain step, then runs `doctor` and `verify --all`.
+in `.ai/config.json`, the repository map in `AGENTS.md`, and the first architecture pages in `wiki/`, then runs `doctor` and `verify --all`.
 
 `.ai/harness.json` records the starter commit and a hash of every file it installed. Keep it: `python3 tool/starter.py upgrade`, run in the starter,
 uses that commit as the base of a 3-way merge per harness file, so both your edits and the starter's arrive. It writes only harness files that are
@@ -45,6 +45,7 @@ python3 tool/ai.py verify --check lint    # also run a declared check that no ch
 python3 tool/ai.py verify --dry-run       # show the selection only
 python3 tool/ai.py wiki lint
 python3 tool/ai.py adapters sync          # create missing .claude/skills links after adding a skill
+python3 tool/ai.py hooks install          # connect the pre-commit hook in this clone
 ```
 
 Built-in checks run for every project: whitespace and conflict markers, secret scan (`.env` files, signing keys, and credential files that git tracks or does not ignore, plus key patterns),
@@ -52,11 +53,19 @@ harness configuration, JSON syntax, Markdown link targets, wiki lint, and the ha
 Everything language-specific comes from `checks` in `.ai/config.json`, which only onboarding (or an approved L2 change) edits.
 `--check` accepts only ids declared there, so no command reaches the verifier from outside that file.
 
+## Pre-commit hook
+
+`.githooks/pre-commit` runs `python3 tool/ai.py verify --id pre-commit` before every commit and stops the commit when a check fails.
+Git does not share `core.hooksPath` through a clone, so run `python3 tool/ai.py hooks install` once after cloning; `doctor` warns until you do.
+If the repository already runs hooks from another tool (husky, lefthook, pre-commit, or files in `.git/hooks`), `hooks install` leaves them
+in place, and you add the same verify call to that tool's pre-commit hook. Commands of your own go between the `project:pre-commit` markers.
+`verify` checks the working tree, so changes you leave unstaged are checked too. Verification receipts collect in `.ai/runs/pre-commit/`.
+
 ## Guard hook
 
 `.claude/settings.json` registers `python3 tool/ai.py hook pre-tool-use`. It blocks force pushes, pushes that delete remote branches or tags,
 `git reset --hard`, `git clean -f`, worktree-discarding `git restore`/`git checkout`/`git switch`, force branch deletion, stash drops,
-recursive `rm` or `find -delete` on broad targets, and reading, copying, or printing `.env` files (including through git history and `<`
+skipping the pre-commit hook (`git commit --no-verify`, changing `core.hooksPath`), recursive `rm` or `find -delete` on broad targets, and reading, copying, or printing `.env` files (including through git history and `<`
 redirection) and secret-looking environment variables. Listing the commits that touched an env file (`git log -- '.env*'`) stays allowed. Commands are parsed with shell quoting:
 global git options, `sudo`, `bash -c`, and heredocs fed to a shell are seen through, while text in a commit message or a heredoc written
 to a file is not a command. Instructions in `AGENTS.md` are context; the hook is enforcement. When a blocked action is really intended,

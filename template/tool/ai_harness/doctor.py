@@ -7,6 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from . import hooks
 from .checks import config_rule_errors
 from .paths import CLAUDE_AGENTS_DIR, CLAUDE_SKILLS_DIR, CONFIG_FILE, SKILLS_DIR, HarnessError, read_json
 from .schema import SCHEMA_FILES, SKILL_NAME, validate_artifact
@@ -15,7 +16,7 @@ from .wiki import parse_frontmatter
 REQUIRED_FILES = [
     "AGENTS.md", "CLAUDE.md", "REVIEW.md", CONFIG_FILE,
     *[f".ai/schemas/{name}" for name in SCHEMA_FILES.values()],
-    "tool/ai.py",
+    "tool/ai.py", hooks.PRE_COMMIT,
 ]
 SKILL_BODY_LIMIT = 500
 _SKILL_REFERENCE = re.compile(r"\.agents/skills/([a-z0-9-]+)/SKILL\.md")
@@ -95,6 +96,10 @@ def doctor(root: Path) -> tuple[dict, int]:
     if shutil.which("git") is None:
         errors.append("git is not on PATH")
     errors += static_errors(root, warnings)
+    if shutil.which("git") is not None:
+        problem = hooks.state(root)["problem"]
+        if problem:
+            warnings.append(problem)
 
     tools = {}
     if (root / CONFIG_FILE).is_file():

@@ -49,5 +49,7 @@ A conflict means a repository and the starter changed the same lines. Resolving 
 ## 5. Verify and finish
 
 - Run `cd <repo> && python3 tool/ai.py verify` in every upgraded repository. Leftover conflict markers fail `git-diff-check`.
+- Run `cd <repo> && python3 tool/ai.py doctor` too. Upgrade adds harness files but never changes git config, so a warning that commits are not verified
+  is answered with `python3 tool/ai.py hooks install`, after telling the user that every commit will run `verify` from then on.
 - Nothing is committed. Show `git -C <target> status --short` for each target, and commit only when the user asks.
 - Recommend opening the next session in each repository so that the upgraded hook and skills load.

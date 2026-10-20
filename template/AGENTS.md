@@ -38,6 +38,7 @@ Not onboarded yet. Onboarding states the allowed dependency directions in one or
 - A workspace folder may hold this repository next to others, with its own `AGENTS.md` describing their roles. This file still rules inside this repository, and CI never sees the workspace.
 - `.agents/skills/`: the only copy of every skill. `.claude/skills/` holds links to it; after adding a skill run `python3 tool/ai.py adapters sync`.
 - `tool/ai.py`: the verification CLI (Python 3.10+, standard library only).
+- `.githooks/pre-commit`: runs `verify` before every commit once `python3 tool/ai.py hooks install` has connected it in this clone.
 - `wiki/`: project knowledge that outlives a task. Its format is defined in [wiki/README.md](wiki/README.md).
 - `project:<name>` markers in harness files enclose this repository's own content. The starter's upgrade keeps that content as it is
   and merges only the text around it, so keep the markers and write project content between them.
@@ -156,6 +157,8 @@ what blocks, and the next actions. Do not repeat what the code or the wiki alrea
   - Everything language-specific (format, lint, type check, boundary check, tests, codegen) comes from `checks` in `.ai/config.json`, ordered `early`, then `generate`, then `late`.
 - When the default selection cannot prove the result, add `--check <id>` for a declared check. If the needed check is not declared, propose adding it (L2) instead of running ad-hoc commands as evidence.
 - Only when `verify` cannot run, run individual commands and report what you ran by hand and why.
+- Every commit runs `verify` through the pre-commit hook. When it blocks a commit, fix the failure with `repo-verify`; never skip it with `--no-verify`
+  or by changing `core.hooksPath`. If `doctor` warns that commits are not verified, tell the user and follow its instruction.
 - If a check fails or you must interpret someone else's receipt, read [.agents/skills/repo-verify/SKILL.md](.agents/skills/repo-verify/SKILL.md).
 - Report not-run, failed, and pre-existing failures as distinct outcomes.
 

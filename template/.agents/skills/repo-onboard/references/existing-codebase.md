@@ -15,4 +15,5 @@ Onboarding documents and guards an existing codebase; it does not restructure it
   other tools' rule files (`.cursorrules`, `.cursor/rules/`, `.github/copilot-instructions.md`, `AGENT.md`, `GEMINI.md`), or its own entries under `.claude/`.
   Before writing, propose where each rule goes (`project:rules` in `AGENTS.md` or a wiki `rule` page), which file becomes a pointer to `AGENTS.md`,
   what stays as it is, and which rules contradict the harness. Delete a set-aside file only after its rules are merged and the user agrees.
-- **Existing CI stays.** Add the verify workflow next to existing pipelines; do not replace them.
+- **Existing CI and hooks stay.** Do not replace pipelines or hook managers (husky, lefthook, pre-commit). When one owns the pre-commit hook,
+  propose adding `python3 tool/ai.py verify --id pre-commit` to it instead of switching `core.hooksPath`. Adding `verify` to existing CI is a separate proposal.

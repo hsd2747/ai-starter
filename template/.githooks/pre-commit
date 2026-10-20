@@ -1,0 +1,11 @@
+#!/bin/sh
+# `python3 tool/ai.py hooks install` points core.hooksPath at this folder; doctor warns when it does not.
+set -e
+
+# project:pre-commit:start
+# Commands this repository runs before verify go between these markers.
+# project:pre-commit:end
+
+# git points GIT_INDEX_FILE at the commit's index, and checks that run git in other repositories would write into it.
+unset GIT_INDEX_FILE
+exec python3 tool/ai.py verify --id pre-commit

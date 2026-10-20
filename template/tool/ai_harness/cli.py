@@ -4,7 +4,7 @@ import argparse
 import json
 import sys
 
-from . import doctor, guard, wiki
+from . import doctor, guard, hooks, wiki
 from .checks import wiki_root
 from .paths import HarnessError, ToolMissing, locate_root
 
@@ -17,6 +17,8 @@ python3 tool/ai.py <command>
          [--dry-run]              Show the selection without running it
   wiki lint                       Lint wiki frontmatter, slugs, links, index, and log
   adapters sync                   Create missing .claude/skills links (never deletes)
+  hooks install                   Point core.hooksPath at .githooks so every commit runs verify; run once per clone.
+                                  Leaves another tool's hooks in place and says where to add verify instead
   hook pre-tool-use               Claude Code PreToolUse guard (reads the hook JSON on stdin)
 
 Output is JSON. Exit codes: 0 ok, 1 validation or check failure, 2 guard block, 3 missing tool or doctor failure.
@@ -34,6 +36,7 @@ def _parser() -> argparse.ArgumentParser:
     verify.add_argument("--dry-run", action="store_true")
     sub.add_parser("wiki").add_subparsers(dest="action").add_parser("lint")
     sub.add_parser("adapters").add_subparsers(dest="action").add_parser("sync")
+    sub.add_parser("hooks").add_subparsers(dest="action").add_parser("install")
     return parser
 
 
@@ -55,6 +58,8 @@ def dispatch(args: argparse.Namespace) -> tuple[dict, int]:
     if args.command == "adapters" and args.action == "sync":
         report = doctor.sync_adapters(root)
         return report, 0 if report["ok"] else 1
+    if args.command == "hooks" and args.action == "install":
+        return hooks.install(root)
     raise HarnessError("Incomplete command. Run `python3 tool/ai.py help`.")
 
 

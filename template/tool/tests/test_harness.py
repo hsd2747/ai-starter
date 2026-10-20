@@ -13,14 +13,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ai_harness import checks, docs, guard, secrets, wiki  # noqa: E402
+from ai_harness import checks, docs, guard, hooks, secrets, wiki  # noqa: E402
 from ai_harness.globs import matches  # noqa: E402
 from ai_harness.paths import HarnessError, read_json  # noqa: E402
 from ai_harness.schema import validate, validate_artifact  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 CLI = REPO / "tool" / "ai.py"
-HARNESS_PATHS = ["AGENTS.md", "CLAUDE.md", "REVIEW.md", ".ai", ".agents", "tool", "wiki", ".gitignore"]
+HARNESS_PATHS = ["AGENTS.md", "CLAUDE.md", "REVIEW.md", ".ai", ".agents", ".githooks", "tool", "wiki", ".gitignore"]
 
 
 def fixture_config() -> dict:
@@ -229,6 +229,15 @@ class GuardTest(unittest.TestCase):
         grep["tool_input"]["output_mode"] = "files_with_matches"
         self.assertIsNone(guard.evaluate(grep))
 
+    def test_hook_bypasses(self):
+        for command in ["git commit --no-verify -m x", "git commit -nm x", "git commit -a -n", "git -c core.hooksPath=/dev/null commit -m x",
+                        "git config core.hooksPath x", "git config --unset core.hooksPath", "git config set core.hooksPath x",
+                        "bash -c 'git commit -n'"]:
+            self.assertTrue(self.blocked(command), command)
+        for command in ["git commit -m 'skip -n'", "git commit -m -n", "git commit -am fix", "git commit --amend --no-edit",
+                        "git config --get core.hooksPath", "git config get core.hooksPath", "git commit -m 'never use --no-verify'"]:
+            self.assertFalse(self.blocked(command), command)
+
     def test_unparseable_payload_is_allowed(self):
         self.assertEqual(guard.main("not json"), 0)
         with contextlib.redirect_stderr(io.StringIO()) as stderr:
@@ -428,6 +437,60 @@ class VerifyTest(unittest.TestCase):
             self.assertEqual(code, 0, report)
         finally:
             fresh.close()
+
+
+class HookTest(unittest.TestCase):
+    def setUp(self):
+        self.repo = TempRepo()
+
+    def tearDown(self):
+        self.repo.close()
+
+    def commit(self) -> subprocess.CompletedProcess:
+        self.repo.git("add", "-A")
+        return subprocess.run(["git", "commit", "-q", "-m", "change"], cwd=self.repo.root, capture_output=True, text=True,
+                              env={**os.environ, checks.SELF_TEST_ENV: "1"})
+
+    def test_installed_hook_verifies_every_commit(self):
+        self.assertIn("hooks install", " ".join(self.repo.cli("doctor")[1]["warnings"]))
+        code, report = self.repo.cli("hooks", "install")
+        self.assertEqual(code, 0, report)
+        self.assertTrue(report["installed"] and report["runsVerify"])
+        self.assertEqual(self.repo.git("config", "core.hooksPath").strip(), hooks.HOOKS_DIR)
+        self.assertNotIn("Commits are not verified", " ".join(self.repo.cli("doctor")[1]["warnings"]))
+        self.assertEqual(self.repo.cli("hooks", "install")[1]["installed"], False)
+
+        self.repo.write("notes.md", "trailing   \n")
+        self.assertNotEqual(self.commit().returncode, 0)
+        self.assertEqual(self.repo.git("rev-list", "--count", "HEAD").strip(), "1")
+        self.repo.write("notes.md", "clean\n")
+        self.assertEqual(self.commit().returncode, 0)
+        self.assertTrue(list((self.repo.root / ".ai/runs/pre-commit").glob("verification-*.json")))
+
+    def test_other_tools_hooks_stay_in_effect(self):
+        hook = Path(self.repo.git("rev-parse", "--git-path", "hooks").strip())
+        hook = (self.repo.root / hook / "pre-push")
+        hook.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        hook.chmod(0o755)
+        code, report = self.repo.cli("hooks", "install")
+        self.assertEqual(code, 1)
+        self.assertIn("another tool", report["problem"])
+        self.assertEqual(subprocess.run(["git", "config", "core.hooksPath"], cwd=self.repo.root).returncode, 1)
+
+        self.repo.git("config", "core.hooksPath", ".husky")
+        self.assertEqual(self.repo.cli("hooks", "install")[0], 1)
+        self.repo.write(".husky/pre-commit", "#!/bin/sh\npython3 tool/ai.py verify --id pre-commit\n")
+        (self.repo.root / ".husky/pre-commit").chmod(0o755)
+        code, report = self.repo.cli("hooks", "install")
+        self.assertEqual(code, 0, report)
+        self.assertTrue(report["runsVerify"])
+        self.assertEqual(self.repo.git("config", "core.hooksPath").strip(), ".husky")
+
+    def test_unexecutable_hook_is_reported(self):
+        (self.repo.root / hooks.PRE_COMMIT).chmod(0o644)
+        code, report = self.repo.cli("hooks", "install")
+        self.assertEqual(code, 1)
+        self.assertIn("chmod +x", report["problem"])
 
 
 class ConfigRuleTest(unittest.TestCase):

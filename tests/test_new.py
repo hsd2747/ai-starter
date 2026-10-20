@@ -33,6 +33,9 @@ class NewTest(WorkspaceCase):
         env = {**os.environ, "AI_HARNESS_SELF_TEST": "1"}
         doctor = subprocess.run([sys.executable, "tool/ai.py", "doctor"], cwd=repo, capture_output=True, text=True, env=env)
         self.assertEqual(doctor.returncode, 0, doctor.stdout)
+        self.assertNotIn("Commits are not verified", doctor.stdout)
+        self.assertTrue(report["hooks"]["installed"], report)
+        self.assertEqual(subprocess.run(["git", "config", "core.hooksPath"], cwd=repo, capture_output=True, text=True).stdout.strip(), ".githooks")
         dry = subprocess.run([sys.executable, "tool/ai.py", "verify", "--dry-run"], cwd=repo, capture_output=True, text=True, env=env)
         self.assertEqual(dry.returncode, 0, dry.stdout)
 

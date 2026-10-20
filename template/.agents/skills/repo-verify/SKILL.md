@@ -18,5 +18,7 @@ description: Verify changes with checks proportional to their affected contracts
 7. When subagents wrote parts of the change, verify the merged worktree once rather than per subagent.
 8. Receipts are written to `.ai/runs/<id>/verification-<timestamp>.json` (`--id` defaults to `adhoc`). Before trusting a receipt someone else produced, confirm its scope, base, HEAD, worktree digest, and file list still match the repository, and compare its `toolchain`. Preserve failed evidence; a later run creates a new receipt.
 9. Report each check as pass, fail, or skipped, with the reason for skips and whether failures predate the task.
+10. A commit that the pre-commit hook stopped left its receipt in `.ai/runs/pre-commit/`. Fix the failure and commit again; never bypass the hook.
+    A pre-existing failure that blocks the commit is reported to the user, who decides how to proceed.
 
 Verification never authorizes deploys, external writes, production data changes, deletion, or cost-incurring actions.

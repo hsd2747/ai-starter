@@ -16,7 +16,7 @@ or overwrite existing user files, which it must not do.
 
 ## 1. Inspect before asking
 
-- List the repository outside the harness (`.gitignore`, `AGENTS.md`, `CLAUDE.md`, `REVIEW.md`, `.ai/`, `.agents/`, `.claude/`, `.gemini/`, `tool/`, `wiki/`, `.github/workflows/verify.yml`).
+- List the repository outside the harness (`.gitignore`, `AGENTS.md`, `CLAUDE.md`, `REVIEW.md`, `.ai/`, `.agents/`, `.claude/`, `.gemini/`, `tool/`, `wiki/`, `.githooks/`).
   Anything else means an **existing codebase**: read [references/existing-codebase.md](references/existing-codebase.md) and follow it in addition to these steps.
 - Detect stacks from manifests and lockfiles (for example `package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, `pubspec.yaml`,
   `build.gradle*`, `*.csproj`, `Package.swift`), version pin files, CI configs, and the README.
@@ -43,7 +43,8 @@ Present one proposal and wait for approval. Use this shape, with a source link f
 | --- | --- | --- | --- | --- |
 
 It must cover: architecture style and top-level layout, the dependency rule, how the rule is enforced, formatter, linter or type checker,
-test runner, code generation if any, toolchain pins, CI setup, wiki categories, and `.gitignore` additions.
+test runner, code generation if any, toolchain pins, where `verify` runs before a commit (the harness hook or the project's own hook tool),
+wiki categories, and `.gitignore` additions.
 List what you will create and what you will leave untouched. Ask about any install or scaffolding command before running it:
 name the package, its publisher, and what it does.
 
@@ -68,7 +69,8 @@ Never overwrite an existing non-harness file. If a target exists, skip it and re
    - Add every page to `wiki/index.md` and append one `setup` entry to `wiki/log.md` that lists created pages and rejected options.
 6. Skeleton: for a new project, prefer the ecosystem's official scaffolder (after approval) over hand-made folders, then add only the
    top-level directories the approved layout needs. Do not create empty layer folders for features that do not exist yet.
-7. `.github/workflows/verify.yml`: replace the `TODO(onboarding)` line between the `project:toolchain` markers with the toolchain setup the checks need.
+7. Pre-commit hook: if `doctor` warns that commits are not verified, run `python3 tool/ai.py hooks install`. When it reports another tool's hooks,
+   add `python3 tool/ai.py verify --id pre-commit` to that tool's pre-commit hook as approved in step 4.
 8. `.gitignore`: add the ecosystem's build and cache outputs between the `project:ignore` markers, or at the end of an adopted file without them. Keep `.env` and `.ai/runs/` ignored.
 
 ## 6. Verify and finish

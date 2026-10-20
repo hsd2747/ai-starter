@@ -56,8 +56,9 @@ def git(cwd: Path, *args: str) -> str:
 
 
 def commit_all(cwd: Path) -> None:
+    """Commits fixtures without the pre-commit verify hook that generated repositories connect; the hook has its own tests."""
     git(cwd, "add", "-A")
-    git(cwd, "commit", "-q", "-m", "change")
+    git(cwd, "commit", "-q", "--no-verify", "-m", "change")
 
 
 class WorkspaceCase(unittest.TestCase):

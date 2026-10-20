@@ -22,7 +22,7 @@ Run `python3 tool/starter.py workspace list` from this starter's root. Use it to
 Present these three parts.
 
 **What it is.** A generator for repositories that are developed with AI agents. Each repository gets the same working rules,
-a verification CLI (`python3 tool/ai.py verify`), and a wiki. Architecture and tooling are chosen at onboarding, after an interview, not baked in.
+a verification CLI (`python3 tool/ai.py verify`) that a pre-commit hook runs before every commit, and a wiki. Architecture and tooling are chosen at onboarding, after an interview, not baked in.
 
 **Two things it manages.**
 

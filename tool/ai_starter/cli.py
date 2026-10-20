@@ -12,7 +12,7 @@ from pathlib import Path
 from . import paths, upgrade
 from .files import tree_files
 from .gitutil import git, init_repo, starter_version, version_warnings
-from .install import base_branch, existing_instructions, install, install_conflicts
+from .install import base_branch, connect_hooks, existing_instructions, install, install_conflicts
 from .manifests import load_manifest, write_manifest
 from .paths import HARNESS_RECORD, WORKSPACE_FILE, StarterError, relative_path, resolve_repo, resolve_workspace
 from .registry import describe_workspace, load_registry, registry_path, remember_workspace
@@ -41,7 +41,8 @@ Harness: the starter files inside one repository, whether or not a workspace lis
 
   harness install --repo PATH
         Copy the harness into an existing git repository. Any existing harness file stops the command before it writes;
-        only .gitignore and .gitattributes are merged by appending missing lines.
+        only .gitignore and .gitattributes are merged by appending missing lines. Then point core.hooksPath at .githooks so that
+        every commit runs verify, unless the repository's own hooks are in effect; the report's hooks entry says which.
   harness upgrade --repo PATH [--dry-run]
         Bring starter changes into the repository with a 3-way merge per harness file against the starter commit it recorded.
   harness status --repo PATH
@@ -83,6 +84,7 @@ def cmd_new(args: argparse.Namespace) -> dict:
         init_repo(building, base_branch())
         if args.remote:
             git(building, "remote", "add", "origin", args.remote)
+        hooks, hook_warnings = connect_hooks(building)
         created = ensure_workspace(workspace, version)
         if target.exists():
             target.rmdir()
@@ -90,7 +92,7 @@ def cmd_new(args: argparse.Namespace) -> dict:
     except BaseException:
         shutil.rmtree(building, ignore_errors=True)
         raise
-    warnings = version_warnings(version)
+    warnings = version_warnings(version) + hook_warnings
     warnings += register(workspace, {"name": args.name, "path": args.name, "role": args.role, "remote": args.remote})
     warnings += remember_workspace(workspace)
     return {
@@ -99,6 +101,7 @@ def cmd_new(args: argparse.Namespace) -> dict:
         "workspaceCreated": created,
         "repository": str(target),
         "filesInstalled": len(files),
+        "hooks": hooks,
         "warnings": warnings,
         "next": f"Open an agent session in {target} and ask it to onboard the project. Nothing was committed.",
     }
@@ -128,8 +131,9 @@ def cmd_adopt(args: argparse.Namespace) -> dict:
     version = starter_version()
     created = ensure_workspace(workspace, version)
     merged = install(repo, files, "adopt", version) if args.install else []
+    hooks, hook_warnings = connect_hooks(repo) if args.install else ({}, [])
     kind = repo_kind(workspace, {"path": relative})
-    warnings = version_warnings(version) if args.install else []
+    warnings = version_warnings(version) + hook_warnings if args.install else []
     role = args.role or (previous or {}).get("role", "")
     remote = args.remote or (previous or {}).get("remote", "")
     warnings += register(workspace, {"name": name, "path": relative, "role": role, "remote": remote})
@@ -138,6 +142,7 @@ def cmd_adopt(args: argparse.Namespace) -> dict:
     if args.install:
         report["filesInstalled"] = len(files)
         report["merged"] = merged
+        report["hooks"] = hooks
         report["existingInstructions"] = instructions
         report["next"] = (f"Open an agent session in {repo} and ask it to onboard the existing codebase. "
                           "Review the added files with git status; nothing was committed.")
@@ -197,8 +202,9 @@ def cmd_harness(args: argparse.Namespace) -> dict:
     _refuse_conflicts(repo, files)
     version = starter_version()
     merged = install(repo, files, "adopt", version)
-    return {"ok": True, "repository": str(repo), "filesInstalled": len(files), "merged": merged, "existingInstructions": instructions,
-            "warnings": version_warnings(version),
+    hooks, hook_warnings = connect_hooks(repo)
+    return {"ok": True, "repository": str(repo), "filesInstalled": len(files), "merged": merged, "hooks": hooks,
+            "existingInstructions": instructions, "warnings": version_warnings(version) + hook_warnings,
             "next": (f"Open an agent session in {repo} and ask it to onboard the existing codebase. If a workspace lists this repository, "
                      "run `sync --workspace <path>` so that its table shows the harness. Review the added files with git status; nothing was committed.")}
 

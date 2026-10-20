@@ -49,7 +49,9 @@ python3 tool/starter.py harness install --repo <path>
 
 - If the user also wants the repository listed in a workspace and it is not listed yet, run `adopt --install` through `starter-adopt-repo` instead; it does both.
 - On `"ok": false` nothing was written. A conflict that appears now goes back to step 2.
-- On success, report `merged`, `existingInstructions`, and every entry in `warnings`, and summarize `git -C <repo> status --short` by top-level folder.
+- On success, report `merged`, `existingInstructions`, `hooks`, and every entry in `warnings`, and summarize `git -C <repo> status --short` by top-level folder.
+  `hooks.installed` or `hooks.runsVerify` means every commit runs `verify`. Otherwise `hooks.problem` says why: another tool's hooks
+  stay in effect, and the user adds `python3 tool/ai.py verify --id pre-commit` to that tool's pre-commit hook, or onboarding proposes it.
 
 ## 4. Next
 

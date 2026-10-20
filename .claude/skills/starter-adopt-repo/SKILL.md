@@ -35,7 +35,8 @@ python3 tool/starter.py adopt --workspace <path> --path <relative> [--name <name
 ```
 
 - On `"ok": false` nothing was written. Existing harness files are handled as in `starter-install-harness`.
-- On success, report `kind`, `merged`, `existingInstructions`, and every entry in `warnings`. After an install, summarize `git -C <repo> status --short` by top-level folder.
+- On success, report `kind`, `merged`, `existingInstructions`, and every entry in `warnings`. After an install, also report `hooks` as in
+  `starter-install-harness`, and summarize `git -C <repo> status --short` by top-level folder.
 
 ## 4. Next
 

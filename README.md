@@ -22,7 +22,8 @@ python3 tool/starter.py new --workspace ~/work/my-product --name web --role "Web
 ```
 
 The first call initializes the workspace. Each call copies `template/` into `<workspace>/<name>`, runs `git init` there,
-records the starter version in `.ai/harness.json`, and adds a row to the workspace table. Nothing is committed.
+records the starter version in `.ai/harness.json`, connects the pre-commit hook that runs `verify` before every commit,
+and adds a row to the workspace table. Nothing is committed.
 Then open an agent session **in the new repository** and ask it to onboard the project; harness details are in `template/.ai/README.md`.
 
 ## Manage a workspace
@@ -55,6 +56,12 @@ are merged by appending missing lines. `harness status` lists those files under 
 instructions the harness would leave in place (`.cursorrules`, `.github/copilot-instructions.md`, the repository's own `.claude/` entries, ...)
 under `existingInstructions`; the `starter-install-harness` skill proposes how to merge each one before it installs.
 
+After the files are in place, `install` (and `adopt --install`) runs the repository's `python3 tool/ai.py hooks install`, which points
+`core.hooksPath` at `.githooks` so that every commit runs `verify`. When the repository already runs hooks from another tool (husky, lefthook,
+pre-commit, or files in `.git/hooks`), it leaves them in effect and the report's `hooks.problem` says where to add the verify call.
+This is the only change outside the files, and it touches only the repository's local git config; a failure there is a warning, not a rollback.
+`core.hooksPath` does not travel with a clone, and `upgrade` never changes git config: run `hooks install` in each clone, as `doctor` reminds you.
+
 ## Bring starter changes into existing repositories
 
 ```bash
@@ -72,7 +79,7 @@ which `verify` then reports until they are resolved. Files the starter removed a
 Three kinds of content are not merged line by line:
 
 - **Marked blocks.** Text between `project:<name>` (or `workspace:<name>`) start and end markers belongs to the target: the repository map
-  and rules in `AGENTS.md`, the toolchain step in `verify.yml`, the project section of `.gitignore`, and the contracts in the workspace `AGENTS.md`.
+  and rules in `AGENTS.md`, the commands in `.githooks/pre-commit`, the project section of `.gitignore`, and the contracts in the workspace `AGENTS.md`.
   The merge covers only the text around the blocks, and each block keeps the target's text.
 - **JSON files** merge by key, and lists of plain values merge by item. Where both sides changed the same key, the target's value stays
   and the key is listed under `kept`. A `schemaVersion` raised by the starter needs a migration step in `MIGRATIONS` in `tool/ai_starter/merge.py`.
