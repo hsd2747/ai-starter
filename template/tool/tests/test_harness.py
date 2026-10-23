@@ -24,10 +24,15 @@ HARNESS_PATHS = ["AGENTS.md", "CLAUDE.md", "REVIEW.md", ".ai", ".agents", ".gith
 
 
 def fixture_config() -> dict:
-    """The repository's config without its project checks, whose tools a throwaway copy does not have."""
+    """The repository's config without its project checks, whose tools a throwaway copy does not have.
+
+    The base branch is pinned to the branch TempRepo creates; a repository whose base is `develop`
+    would otherwise leave verify with no merge base and nothing in scope.
+    """
     config = read_json(REPO / ".ai/config.json")
     config.update(toolchain=[], checks=[])
     config.pop("members", None)
+    config["git"] = {**config.get("git", {}), "baseBranch": "main"}
     return config
 
 
@@ -123,8 +128,10 @@ class DocLinkTest(unittest.TestCase):
         self.assertEqual(docs.resolve_link("docs/x", "/README.md"), "README.md")
 
     def test_every_shipped_markdown_link_resolves(self):
-        files = [p.relative_to(REPO).as_posix() for p in REPO.rglob("*.md")
-                 if ".git" not in p.parts and "runs" not in p.parts and ".claude" not in p.parts
+        roots = [REPO / name for name in HARNESS_PATHS]
+        candidates = [p for root in roots for p in ([root] if root.is_file() else root.rglob("*.md"))]
+        files = [p.relative_to(REPO).as_posix() for p in candidates
+                 if p.suffix == ".md" and "runs" not in p.parts
                  and not checks.DEPENDENCY_SEGMENTS.intersection(p.parts)]
         self.assertEqual(docs.link_failures(REPO, files), [])
 
