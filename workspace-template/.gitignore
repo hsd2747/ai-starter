@@ -8,6 +8,9 @@
 !/.claude/
 !/.ai/
 
+# Personal Claude Code settings stay on each machine; the shared ones are in .claude/settings.json.
+/.claude/settings.local.json
+
 __pycache__/
 *.pyc
 .DS_Store

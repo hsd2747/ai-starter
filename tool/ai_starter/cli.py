@@ -10,8 +10,9 @@ import uuid
 from pathlib import Path
 
 from . import paths, upgrade
+from .clone import clone_workspace
 from .files import tree_files
-from .gitutil import git, init_repo, starter_version, version_warnings
+from .gitutil import check_remote, git, init_repo, origin_url, starter_version, version_warnings
 from .install import base_branch, connect_hooks, existing_instructions, install, install_conflicts
 from .manifests import load_manifest, write_manifest
 from .paths import HARNESS_RECORD, WORKSPACE_FILE, StarterError, relative_path, resolve_repo, resolve_workspace
@@ -25,17 +26,22 @@ python3 tool/starter.py <command>
 Workspace: which repositories a workspace lists, their roles, and the workspace root's own files.
 
   adopt --workspace PATH --path REL [--name NAME] [--role TEXT] [--remote URL] [--install]
-        Register an existing repository inside the workspace; no file in it is touched.
+        Register an existing repository inside the workspace; no file in it is touched. Without --remote, the repository's
+        origin is recorded, with any credentials removed from the URL.
         --install also runs `harness install` on it first, so a registered repository can get the harness this way too.
   unregister --workspace PATH --name NAME
         Remove a repository from workspace.json and the workspace table. The folder and every file in it stay as they are,
         an installed harness included; `harness upgrade` still reaches it.
   sync  --workspace PATH
         Rewrite the repository table in the workspace AGENTS.md from workspace.json, after editing roles or remotes there.
-        The Harness column is read from each repository's .ai/harness.json.
+        The Harness column is read from each repository's .ai/harness.json. Repositories without a remote are warned about.
+  workspace clone --path PATH [--url URL] [--name NAME ...]
+        Reproduce a shared workspace: with --url, clone the workspace repository into PATH (missing or empty) first; then clone
+        every listed repository, or only the named ones, that is not there yet from its remote in workspace.json, and connect
+        the pre-commit hook in those with the harness. Repositories already there are left alone, so run it again after a pull.
   workspace list | add --path PATH | remove --path PATH
         The saved workspace list (~/.claude/ai-starter/workspaces.json, or $AI_STARTER_REGISTRY), most recent first.
-        new, adopt, unregister, sync, and upgrade record their workspace there. remove only forgets the entry; it never touches the folder.
+        new, adopt, unregister, sync, upgrade, and clone record their workspace there. remove only forgets the entry; it never touches the folder.
 
 Harness: the starter files inside one repository, whether or not a workspace lists it. Nothing outside --repo is written.
 
@@ -64,7 +70,15 @@ Every write goes to a temporary file first and is moved into place only when all
 """
 
 
+def _remote_warnings(names: list[str]) -> list[str]:
+    if not names:
+        return []
+    return [f"No remote is recorded for {names}; a teammate who clones the workspace cannot get them. "
+            "Push them, set \"remote\" in workspace.json, and run sync."]
+
+
 def cmd_new(args: argparse.Namespace) -> dict:
+    check_remote(args.remote)
     workspace = resolve_workspace(args.workspace)
     manifest = load_workspace(workspace)
     check_new_entry(manifest, args.name, args.name)
@@ -94,6 +108,7 @@ def cmd_new(args: argparse.Namespace) -> dict:
         raise
     warnings = version_warnings(version) + hook_warnings
     warnings += register(workspace, {"name": args.name, "path": args.name, "role": args.role, "remote": args.remote})
+    warnings += _remote_warnings([] if args.remote else [args.name])
     warnings += remember_workspace(workspace)
     return {
         "ok": True,
@@ -108,6 +123,7 @@ def cmd_new(args: argparse.Namespace) -> dict:
 
 
 def cmd_adopt(args: argparse.Namespace) -> dict:
+    check_remote(args.remote)
     workspace = resolve_workspace(args.workspace)
     relative = relative_path(args.path)
     repo = workspace / relative
@@ -136,7 +152,11 @@ def cmd_adopt(args: argparse.Namespace) -> dict:
     warnings = version_warnings(version) + hook_warnings if args.install else []
     role = args.role or (previous or {}).get("role", "")
     remote = args.remote or (previous or {}).get("remote", "")
+    if not remote:
+        remote, origin_warnings = origin_url(repo)
+        warnings += origin_warnings
     warnings += register(workspace, {"name": name, "path": relative, "role": role, "remote": remote})
+    warnings += _remote_warnings([] if remote else [name])
     warnings += remember_workspace(workspace)
     report = {"ok": True, "workspace": str(workspace), "workspaceCreated": created, "repository": str(repo), "kind": kind, "warnings": warnings}
     if args.install:
@@ -167,7 +187,9 @@ def cmd_sync(args: argparse.Namespace) -> dict:
     warning = sync_agents(workspace, manifest["repos"])
     if warning:
         raise StarterError(warning)
-    return {"ok": True, "workspace": str(workspace), "repos": [r["name"] for r in manifest["repos"]], "warnings": remember_workspace(workspace)}
+    warnings = _remote_warnings([r["name"] for r in manifest["repos"] if not r.get("remote")])
+    return {"ok": True, "workspace": str(workspace), "repos": [r["name"] for r in manifest["repos"]],
+            "warnings": warnings + remember_workspace(workspace)}
 
 
 def cmd_upgrade(args: argparse.Namespace) -> dict:
@@ -210,10 +232,14 @@ def cmd_harness(args: argparse.Namespace) -> dict:
 
 
 def cmd_workspace(args: argparse.Namespace) -> dict:
+    if (args.url or args.name) and args.action != "clone":
+        raise StarterError("--url and --name apply only to `workspace clone`.")
     if args.action == "list":
         return {"ok": True, "registry": str(registry_path()), "workspaces": [describe_workspace(w) for w in load_registry()["workspaces"]]}
     if not args.path:
         raise StarterError(f"workspace {args.action} needs --path.")
+    if args.action == "clone":
+        return clone_workspace(args.path, args.url, args.name)
     if args.action == "add":
         workspace = resolve_workspace(args.path)
         warnings = remember_workspace(workspace)
@@ -259,8 +285,10 @@ def _parser() -> argparse.ArgumentParser:
     harness.add_argument("--repo", required=True)
     harness.add_argument("--dry-run", action="store_true")
     workspace = sub.add_parser("workspace", add_help=False)
-    workspace.add_argument("action", choices=["list", "add", "remove"])
+    workspace.add_argument("action", choices=["list", "add", "remove", "clone"])
     workspace.add_argument("--path", default="")
+    workspace.add_argument("--url", default="")
+    workspace.add_argument("--name", action="append", default=[])
     return parser
 
 

@@ -9,10 +9,10 @@ This repository is ai-starter, a generator. It is never onboarded and holds no p
   `template/` (for example the `template:repo-*` skills or the onboarding gate in `template/AGENTS.md`).
 - `workspace-template/`: files for a workspace root: `AGENTS.md` with a generated repository table, `CLAUDE.md`, a whitelist `.gitignore`, and the guard hook settings.
 - `tool/starter.py`: the generator's entry point. Workspace commands (`adopt`, `unregister`, `sync`, `workspace`) change only a workspace's
-  root files; harness commands (`harness install`, `harness upgrade`, `harness status`) work on one repository, listed in a workspace or not;
+  root files, except `workspace clone`, which also clones the listed repositories from their remotes; harness commands (`harness install`, `harness upgrade`, `harness status`) work on one repository, listed in a workspace or not;
   `new`, `adopt --install`, and `upgrade` combine both. Python 3.10+, standard library only.
-- `tool/ai_starter/`: the generator's code. `cli.py` parses commands and runs all of them except the upgrades in `upgrade.py`; `workspace.py`, `install.py`,
-  and `registry.py` write workspaces, harness copies, and the saved list; `policy.py` decides how each harness file is treated and
+- `tool/ai_starter/`: the generator's code. `cli.py` parses commands and runs all of them except the upgrades in `upgrade.py` and `workspace clone` in `clone.py`;
+  `workspace.py`, `install.py`, and `registry.py` write workspaces, harness copies, and the saved list; `policy.py` decides how each harness file is treated and
   `merge.py` merges one file by that policy; `manifests.py` validates state files;
   `files.py`, `gitutil.py`, and `paths.py` hold the shared helpers. Read `paths.STARTER`, `paths.TEMPLATE`, and `paths.WORKSPACE_TEMPLATE`
   as attributes, never import them by name: tests point them at a throwaway copy of the starter.
@@ -36,7 +36,8 @@ This repository is ai-starter, a generator. It is never onboarded and holds no p
   that the starter skills read. It never writes into this starter, never overwrites an existing file, and validates everything before
   its first write. `tests/` pins these rules and redirects the list with `AI_STARTER_REGISTRY`; keep them passing.
 - Every file the generator writes goes through `files.Staging` (or `files.write_atomic` for a single file), never through a direct write,
-  so that a failure leaves its targets as they were. Writes that belong together, such as the files of one command, share one `Staging`.
+  so that a failure leaves its targets as they were. The one exception is a clone by `workspace clone`: git writes it into a temporary folder
+  inside the workspace, and it is moved into place whole only after it succeeds. Writes that belong together, such as the files of one command, share one `Staging`.
 - Every read and write of `workspace.json`, `.ai/harness.json`, and the saved workspace list goes through the schemas in `tool/schemas/`.
   A field added to one of these files is added to its schema in the same change; files that existing workspaces already hold must stay valid.
 - `upgrade` and `harness upgrade` are the only commands that change files the starter installed earlier: only those files, only when git shows every file

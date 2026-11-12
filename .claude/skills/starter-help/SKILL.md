@@ -43,6 +43,7 @@ A repository in a workspace is `managed` when it has the harness and `registered
 | Set up a repository's architecture and tooling | "Onboard be" | `starter-onboard-repo` |
 | Bring starter changes into repositories | "Upgrade my workspace" | `starter-upgrade` |
 | Record roles and contracts between repositories | "Record the API contract between be and app" | `starter-workspace` |
+| Share a workspace, or set up a teammate's one locally | "Clone our team workspace into ~/work/shop" | `starter-workspace` |
 | Take a repository out of a workspace | "Remove admin from the workspace" | `starter-unregister-repo` |
 
 ## 3. Guarantees
@@ -62,7 +63,7 @@ The skills run these from this starter's root; show them only to a user who want
 | Area | Command |
 | --- | --- |
 | Both | `new --workspace PATH --name NAME [--role TEXT]`, `upgrade --workspace PATH [--name NAME] [--dry-run]` |
-| Workspace | `adopt --workspace PATH --path REL [--install]`, `unregister --workspace PATH --name NAME`, `sync --workspace PATH`, `workspace list \| add \| remove` |
+| Workspace | `adopt --workspace PATH --path REL [--install]`, `unregister --workspace PATH --name NAME`, `sync --workspace PATH`, `workspace list \| add \| remove \| clone` |
 | Harness | `harness install \| upgrade \| status --repo PATH` |
 
 For details beyond this, point to the matching section of `README.md` instead of reciting it.

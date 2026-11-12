@@ -42,6 +42,25 @@ Run `sync` after editing roles or remotes in `workspace.json`, or after installi
 `workspace.json` holds names, paths, roles, and remotes only. The table's Harness column is read from each repository:
 **managed** when it has `.ai/harness.json`, **registered** otherwise.
 
+## Share a workspace with the team
+
+The workspace root is a git repository of its own that tracks only its root files, like a manifest: push it, and teammates rebuild the
+same folder from it. `adopt` records the repository's `origin` when `--remote` is not given; `new`, `adopt`, and `sync` warn about every repository without a remote.
+A remote that carries credentials (`https://token@...`) is refused on the command line, and an `origin` that carries them is recorded without them.
+
+```bash
+git -C ~/work/my-product remote add origin git@example.com:team/my-product-workspace.git && git -C ~/work/my-product push -u origin main
+python3 tool/starter.py workspace clone --path ~/work/my-product --url git@example.com:team/my-product-workspace.git   # a teammate, once
+python3 tool/starter.py workspace clone --path ~/work/my-product                                                      # after a pull lists new repositories
+python3 tool/starter.py workspace clone --path ~/work/my-product --name be                                            # only some of them
+```
+
+`workspace clone` clones the workspace repository into an empty or missing folder when `--url` is given, then every listed repository
+that is not there yet from its remote, and connects the pre-commit hook in those with the harness. It never touches a repository that is already there,
+skips entries without a remote, and stops before cloning anything when a path holds a folder that is not a git repository.
+Teammates also need this starter at a commit that contains the one the workspace recorded, for `upgrade`; the report warns when it does not.
+Personal settings (`.claude/settings.local.json`) are ignored in the workspace and in generated repositories.
+
 ## Manage the harness in one repository
 
 ```bash
@@ -117,7 +136,7 @@ Each skill starts from the saved workspace list; when it is empty, the skill exp
 | `starter-adopt-repo` | "Add the existing admin repository" | Lists it with its role, optionally with the harness, runs `adopt` |
 | `starter-install-harness` | "Install the harness in admin" | Checks `harness status` and the worktree, runs `harness install` |
 | `starter-unregister-repo` | "Take admin out of my-product" | Shows what stays and which contracts name it, runs `unregister` |
-| `starter-workspace` | "Record the contracts between be and app" | Edits roles and the contracts section, proposes per-repository rules |
+| `starter-workspace` | "Record the contracts between be and app", "Set up the team's workspace here" | Edits roles and the contracts section, proposes per-repository rules; shares and clones workspaces |
 | `starter-upgrade` | "Bring the latest starter into my-product" | Shows the dry run, runs `upgrade` or `harness upgrade`, helps resolve conflicts, runs `verify` |
 
 Onboarding from this session does not load the repository's own hook and permission settings. For daily work, open a session in the repository itself.

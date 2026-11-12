@@ -1,6 +1,6 @@
 ---
 name: starter-workspace
-description: Maintain a workspace's root files through conversation: repository roles in workspace.json and the generated table, the contracts between repositories in the workspace AGENTS.md, and the workspace's own commit. Use when the user asks to record or update contracts, ownership, or roles between repositories such as be, web, and app, to change a repository's role, or to tidy up or commit a workspace.
+description: Maintain a workspace's root files through conversation: repository roles and remotes in workspace.json and the generated table, the contracts between repositories in the workspace AGENTS.md, the workspace's own commit, and sharing it with the team or cloning a teammate's workspace with workspace clone. Use when the user asks to record or update contracts, ownership, or roles between repositories such as be, web, and app, to change a repository's role, to tidy up or commit a workspace, or to share a workspace or set up a teammate's one locally (for example "팀원 워크스페이스 받아줘", "워크스페이스 팀이랑 공유하고 싶어").
 ---
 
 # Workspace upkeep
@@ -30,6 +30,19 @@ First choose the workspace with [choose-workspace.md](references/choose-workspac
 5. A rule that a repository must obey also has to live in that repository. For each affected managed repository, propose a candidate:
    a wiki `rule` page following its `wiki/README.md`, or a line between the `project:rules` markers of its `AGENTS.md` (L2 there). Write it only after approval, under that repository's `AGENTS.md`
    and its `repo-wiki-write` skill, then run `cd <repo> && python3 tool/ai.py verify`. A registered repository gets no harness file; mention the gap instead.
+
+## Sharing
+
+The workspace repository works like a manifest: teammates clone it and then every listed repository from its `remote`.
+
+- **Share.** Show which entries in `workspace.json` have no `remote` (`sync` warns about them). Ask for each URL, never one with a token or password in it,
+  edit the entries, and run `sync`. Adding a remote to the workspace repository and pushing it are outward-facing: do them only when the user asks,
+  after showing the remote URL and the files that would be pushed (`git -C <workspace> ls-files`).
+- **Clone a teammate's workspace.** Ask for the workspace repository URL and a local path, then run
+  `python3 tool/starter.py workspace clone --path <path> --url <url>` from this starter's root. For a workspace that is already there, for example after a pull
+  that added a repository, omit `--url`; `--name <repo>` limits it to some repositories. Report `cloned`, `present`, `skipped` with their reasons, and warnings.
+  A clone that fails on authentication means the user's git cannot reach that remote yet; suggest they check their access with `! git ls-remote <remote>`, never a URL with a token.
+- Each cloned repository still needs its own local setup, such as dependencies and environment files made from their examples; point to its README instead of doing it unasked.
 
 ## Commit
 

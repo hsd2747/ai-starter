@@ -22,6 +22,10 @@ id_ecdsa
 id_ed25519
 client_secret*.json
 
+# Personal agent settings stay on each machine; the shared ones are AGENTS.md and .claude/settings.json.
+CLAUDE.local.md
+.claude/settings.local.json
+
 # Python caches from tool/
 __pycache__/
 *.pyc
