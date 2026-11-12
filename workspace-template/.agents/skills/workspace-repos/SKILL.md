@@ -1,6 +1,6 @@
 ---
 name: workspace-repos
-description: List or unlist a repository in this workspace, or change its role or remote, with `.ai/workspace.py register`, `unregister`, and `sync`, which change only workspace.json and the repository table in AGENTS.md. Use when someone wants to add a repository cloned here to the workspace, take one off the list, or change what the table says about it (for example "admin 레포 워크스페이스에 등록해줘", "이 레포 목록에서 빼줘", "be 역할 설명 바꿔줘").
+description: List or unlist a repository in this workspace, or change its name, role, or remote, with `.ai/workspace.py register`, `unregister`, and `sync`, which change only workspace.json and the repository table in AGENTS.md, and keep the contract lines in AGENTS.md in step after approval. Use when someone wants to add a repository cloned here to the workspace, take one off the list, or change what the table says about it (for example "admin 레포 워크스페이스에 등록해줘", "이 레포 목록에서 빼줘", "be 역할 설명 바꿔줘").
 ---
 
 # Workspace repositories
@@ -22,6 +22,9 @@ if the user asks for it, say so and leave it there.
    ```
 
 4. Report `registered`, `kind`, and every warning. Without a remote, teammates cannot clone the repository: ask for its URL, never one with a token or password in it.
+5. Look, read-only, for contracts between the new repository and the listed ones: an API it serves or calls, a shared database or message format,
+   a package one depends on. Follow the contracts steps of `workspace-rules`: propose lines for the `workspace:contracts` block and edit it after approval.
+   With none found, say so in one line.
 
 ## Unregister
 
@@ -33,10 +36,12 @@ if the user asks for it, say so and leave it there.
 4. Propose new text for the contract lines that named the repository and edit them after approval, as `workspace-rules` describes.
    Deleting or moving the folder is the user's decision; never do it yourself.
 
-## Role or remote
+## Name, role, or remote
 
 Edit the entry in `workspace.json`, then run `python3 .ai/workspace.py sync`. Never edit between the `workspace:repos` markers by hand.
 A remote is never a URL with a token or password in it.
+A new name leaves the old one in the `workspace:contracts` block of `AGENTS.md`: list every line there that uses it, propose the same lines with the new name,
+and edit them after approval, as `workspace-rules` describes.
 
 ## Finish
 
