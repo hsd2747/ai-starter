@@ -23,12 +23,16 @@ This folder is a git repository of its own; the repositories it lists are cloned
 git clone <this workspace repository> <folder> && cd <folder>
 python3 .ai/workspace.py clone --team <team>   # every listed repository that is not here yet, and your team in CLAUDE.local.md
 python3 .ai/workspace.py clone --name be       # only the named ones
-python3 .ai/workspace.py check                 # personal files tracked by git, or no team recorded
+python3 .ai/workspace.py check                 # what is still missing: team, tools, repositories, skills
+python3 .ai/workspace.py update                # later: pull this folder, clone new repositories, fast-forward the others
 ```
 
 It never touches a repository that is already here, skips entries without a remote, and connects the pre-commit verify hook in
 repositories with the harness. A repository you cannot access is listed under `failed` and the rest go on; ask for access and run it again.
-Run it again after a pull that lists new repositories. Each repository's own setup still follows its README.
+Each repository's own setup still follows its README.
+
+`update` only fast-forwards: it skips a repository with uncommitted changes to tracked files, a detached HEAD, or a branch without an upstream,
+and reports one that has diverged. It never stashes, resets, merges, or switches branches. `--name` limits it to some repositories.
 
 ## Teams and personal settings
 
@@ -66,6 +70,17 @@ For example: `be` owns the HTTP API; its OpenAPI document is the source of truth
 - Run checks from inside the repository: `cd <repo> && python3 tool/ai.py verify`. Run from this folder, the CLI finds the wrong root and fails.
 - Changing a contract that a repository owns is at least L2 there. Name every consumer repository and what it must change in the completion report,
   and change consumers in their own repositories, as separate tasks with their own verification.
-- Commits, branches, and pushes happen per repository and only when the user asks.
+- Commits, branches, and pushes happen per repository and only when the user asks, except where the workspace rules below make a standing exception.
 - This folder's own git history tracks only this file, `README.md`, `CLAUDE.md`, `workspace.json`, `.gitignore`, and `.claude/`, `.agents/`, `.ai/`;
   repositories are ignored, never submodules. `README.md` is for people: keep its getting-started steps in step with this file.
+- Keep this file under 200 lines: every session here loads all of it, and a longer file is followed less reliably. Only rules that most
+  sessions need belong here. A procedure that only some tasks need goes into a workspace skill, or into a `.ai/<topic>.md` file that one line
+  here says when to read. `python3 .ai/workspace.py check` warns when this file grows past the limit.
+
+## Workspace rules
+
+Rules that only this workspace has, for every team or marked with teams. Add them between the markers, where starter upgrades keep them.
+
+<!-- workspace:rules:start -->
+None yet.
+<!-- workspace:rules:end -->

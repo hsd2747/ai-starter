@@ -35,7 +35,8 @@ Steps that only this workspace needs, such as connectors, accounts, or whom to a
 
 ## Day to day
 
-- `git pull`, then `python3 .ai/workspace.py clone` to get repositories added since.
+- `python3 .ai/workspace.py update` brings everything up to date: it pulls this repository, clones repositories added since, and
+  fast-forwards the others. It skips a repository with uncommitted changes or one on a branch without an upstream, and never discards anything.
 - `CLAUDE.local.md` is yours: your team and your own preferences for agents. Git ignores it. Rules for everyone belong in `AGENTS.md`.
 - Workspace skills live in `.agents/skills/<name>/SKILL.md`. To add one, write that file, run `python3 .ai/workspace.py skills sync`
   so that Claude Code sees it (`.claude/skills/<name>`), check it with `python3 .ai/workspace.py check`, and commit both.

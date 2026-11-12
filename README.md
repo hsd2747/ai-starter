@@ -61,6 +61,7 @@ A teammate does not need this starter for that. Every workspace carries the same
 git clone git@example.com:team/my-product-workspace.git ~/work/my-product && cd ~/work/my-product
 python3 .ai/workspace.py clone --team pm [--name be]   # clone what is missing, record the team
 python3 .ai/workspace.py check                         # personal files tracked by git, or no team recorded
+python3 .ai/workspace.py update                        # later: pull the workspace, clone new repositories, fast-forward the rest
 ```
 
 A repository the person cannot access is reported under `failed` and the others are still cloned, so access can be granted per repository
@@ -129,7 +130,7 @@ which `verify` then reports until they are resolved. Files the starter removed a
 Three kinds of content are not merged line by line:
 
 - **Marked blocks.** Text between `project:<name>` (or `workspace:<name>`) start and end markers belongs to the target: the repository map
-  and rules in `AGENTS.md`, the commands in `.githooks/pre-commit`, the project section of `.gitignore`, and the contracts in the workspace `AGENTS.md`.
+  and rules in `AGENTS.md`, the commands in `.githooks/pre-commit`, the project section of `.gitignore`, and the contracts and workspace rules in the workspace `AGENTS.md`.
   The merge covers only the text around the blocks, and each block keeps the target's text.
 - **JSON files** merge by key, and lists of plain values merge by item. Where both sides changed the same key, the target's value stays
   and the key is listed under `kept`. A `schemaVersion` raised by the starter needs a migration step in `MIGRATIONS` in `tool/ai_starter/merge.py`.

@@ -229,6 +229,61 @@ class CloneTest(WorkspaceCase):
         self.assertTrue(any("must be 'plan-review'" in p for p in problems), problems)
         self.assertTrue(any("needs a description" in p for p in problems), problems)
 
+    def test_update_pulls_the_workspace_clones_new_repositories_and_only_fast_forwards(self):
+        url = self.share()
+        git(self.ws, "remote", "add", "origin", str(url))
+        mate = self.base / "mate"
+        self.assertEqual(run("workspace", "clone", "--path", str(mate), "--url", str(url), "--team", "dev")[0], 0)
+
+        (self.ws / "be" / "upstream.txt").write_text("one\n", encoding="utf-8")
+        commit_all(self.ws / "be")
+        git(self.ws / "be", "push", "-q", "origin", "HEAD")
+        web = git_repo(self.ws / "web")
+        (web / "index.html").write_text("web\n", encoding="utf-8")
+        commit_all(web)
+        manifest = self.manifest()
+        manifest["repos"].append({"name": "web", "path": "web", "remote": str(self.bare(web, "web"))})
+        (self.ws / "workspace.json").write_text(json.dumps(manifest), encoding="utf-8")
+        commit_all(self.ws)
+        git(self.ws, "push", "-q", "origin", "HEAD")
+
+        code, report = self.tool(mate, "update")
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report["root"]["status"], "updated")
+        self.assertEqual([c["name"] for c in report["cloned"]], ["web"])
+        self.assertEqual(report["repos"]["be"]["status"], "updated")
+        self.assertTrue((mate / "be" / "upstream.txt").is_file())
+        self.assertEqual(self.tool(mate, "update")[1]["repos"]["be"]["status"], "up-to-date")
+
+        (self.ws / "be" / "upstream.txt").write_text("two\n", encoding="utf-8")
+        commit_all(self.ws / "be")
+        git(self.ws / "be", "push", "-q", "origin", "HEAD")
+        (mate / "be" / "upstream.txt").write_text("local edit\n", encoding="utf-8")
+        code, report = self.tool(mate, "update", "--name", "be")
+        self.assertEqual(code, 0, report)
+        self.assertNotIn("root", report)
+        self.assertEqual(report["repos"]["be"]["reason"], "uncommitted changes to tracked files")
+        self.assertEqual((mate / "be" / "upstream.txt").read_text(encoding="utf-8"), "local edit\n")
+
+        commit_all(mate / "be")
+        head = git(mate / "be", "rev-parse", "HEAD")
+        report = self.tool(mate, "update", "--name", "be")[1]
+        self.assertEqual(report["repos"]["be"]["status"], "failed")
+        self.assertIn("diverged", report["repos"]["be"]["error"])
+        self.assertEqual(git(mate / "be", "rev-parse", "HEAD"), head)
+        self.assertTrue(any("Not updated" in w for w in report["warnings"]), report["warnings"])
+
+    def test_check_warns_when_agents_md_grows_past_the_limit(self):
+        url = self.share()
+        mate = self.base / "mate"
+        self.assertEqual(run("workspace", "clone", "--path", str(mate), "--url", str(url), "--team", "dev")[0], 0)
+        self.assertFalse(any("AGENTS.md has" in w for w in self.tool(mate, "check")[1]["warnings"]))
+        with open(mate / "AGENTS.md", "a", encoding="utf-8") as handle:
+            handle.write("- filler rule\n" * 200)
+        code, report = self.tool(mate, "check")
+        self.assertEqual(code, 0, "a long AGENTS.md is a warning, not a problem")
+        self.assertTrue(any("AGENTS.md has" in w for w in report["warnings"]), report["warnings"])
+
     def test_check_asks_for_a_team_until_one_is_recorded(self):
         url = self.share()
         mate = self.base / "mate"

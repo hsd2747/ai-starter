@@ -18,6 +18,13 @@ First choose the workspace with [choose-workspace.md](references/choose-workspac
 - Turning a registered repository into a managed one goes through `starter-install-harness`, then `sync`, not through an edit.
 - Taking a repository out of the workspace goes through `starter-unregister-repo`, not through an edit. It only unlists the repository; never delete its folder.
 
+## Workspace rules
+
+Rules that only this workspace has go between the `workspace:rules` markers of the workspace `AGENTS.md`, where upgrades keep them; never edit the
+starter's sections around them for that. Mark a rule that only some teams follow, such as "(dev)". The file stays under 200 lines because every session
+loads it whole: a procedure that only some tasks need becomes a workspace skill or a `.ai/<topic>.md` file that one rule line points to.
+`python3 <workspace>/.ai/workspace.py check` warns past the limit. Propose the change and write it after approval.
+
 ## Contracts
 
 1. Read the workspace `AGENTS.md` and `workspace.json`. For each managed repository, read the repository map in its `AGENTS.md` and its `wiki/index.md`,

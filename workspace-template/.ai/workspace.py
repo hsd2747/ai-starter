@@ -2,6 +2,7 @@
 """Workspace commands that need only this workspace repository, not the ai-starter that created it.
 
     python3 .ai/workspace.py clone [--team TEAM] [--name NAME ...]
+    python3 .ai/workspace.py update [--name NAME ...]
     python3 .ai/workspace.py local --team TEAM
     python3 .ai/workspace.py check [--access]
     python3 .ai/workspace.py skills sync
@@ -12,6 +13,11 @@ that git setting. A repository that is already here is never touched and an entr
 that fails, for example on a repository the user has no access to, is reported under `failed` and the others go on.
 A path that holds something other than a git repository stops the command before it clones anything. Run it again
 after a pull that lists new repositories. With --team it also runs `local`.
+
+`update` fast-forwards the workspace repository, clones repositories it lists since, and fast-forwards every repository here,
+each on the branch it is on. It skips a repository with uncommitted changes to tracked files, a detached HEAD, or a branch without
+an upstream, and reports one that cannot fast-forward. It never stashes, resets, merges, or switches branches. With --name it
+updates only the named repositories, not the workspace repository.
 
 `local` keeps the user's personal settings in CLAUDE.local.md at the workspace root: ignored by git, loaded by Claude Code
 in every session there, and read by other agents as AGENTS.md says. It is made from .ai/CLAUDE.local.example.md the
@@ -54,6 +60,8 @@ CLAUDE_SKILLS_DIR = ".claude/skills"
 SKILL_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,63}\Z")
 # Python that repositories with the harness need for `verify` and the commit hook; this file itself runs on 3.9.
 HARNESS_PYTHON = (3, 10)
+# Every session at the root loads AGENTS.md whole; past this, `check` warns. Claude Code's guidance for one instruction file.
+AGENTS_LINE_LIMIT = 200
 
 
 class WorkspaceError(Exception):
@@ -269,6 +277,49 @@ def set_local_team(workspace: Path, team: str) -> dict:
     return {"path": str(path), "created": created, "team": team}
 
 
+def _fast_forward(repo: Path) -> dict:
+    """Fast-forwards the current branch from its upstream, or says why it did not. Never changes anything else."""
+    def rev(*args: str) -> str:
+        return _git(repo, "rev-parse", *args).strip()
+    try:
+        branch = rev("--abbrev-ref", "HEAD")
+        if branch == "HEAD":
+            return {"status": "skipped", "reason": "detached HEAD"}
+        try:
+            upstream = rev("--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+        except WorkspaceError:
+            return {"status": "skipped", "branch": branch, "reason": "the branch has no upstream"}
+        if _git(repo, "status", "--porcelain", "--untracked-files=no").strip():
+            return {"status": "skipped", "branch": branch, "reason": "uncommitted changes to tracked files"}
+        before = rev("HEAD")
+        _git(repo, "pull", "--ff-only", "--quiet")
+        after = rev("HEAD")
+    except WorkspaceError as error:
+        return {"status": "failed", "error": f"{error}. A branch that has diverged from its upstream needs a merge or rebase by hand."}
+    if before == after:
+        return {"status": "up-to-date", "branch": branch, "upstream": upstream}
+    return {"status": "updated", "branch": branch, "upstream": upstream, "from": before[:12], "to": after[:12]}
+
+
+def update(workspace: Path, names: list[str]) -> dict:
+    """Pulls the workspace repository first, so that repositories it newly lists are cloned in the same run."""
+    report: dict = {"ok": True, "workspace": str(workspace)}
+    if not names:
+        report["root"] = _fast_forward(workspace)
+    cloned = clone(workspace, names)
+    repos = {r["name"]: r for r in load_repos(workspace)}
+    fresh = {c["name"] for c in cloned["cloned"]}
+    report["repos"] = {name: _fast_forward(workspace / repos[name]["path"]) for name in cloned["present"] if name not in fresh}
+    report.update({key: cloned[key] for key in ("cloned", "skipped", "failed")})
+    report["warnings"] = cloned["warnings"]
+    stuck = [name for name, result in report["repos"].items() if result["status"] != "up-to-date" and result["status"] != "updated"]
+    if report.get("root", {}).get("status") in ("skipped", "failed"):
+        stuck.insert(0, "(workspace)")
+    if stuck:
+        report["warnings"].append(f"Not updated: {stuck}; see each entry's reason.")
+    return report
+
+
 def skill_names(workspace: Path) -> list[str]:
     base = workspace / SKILLS_DIR
     return sorted(p.name for p in base.iterdir() if p.is_dir() and not p.name.startswith(".")) if base.is_dir() else []
@@ -365,6 +416,12 @@ def check(workspace: Path, access: bool = False) -> dict:
     elif manifest.get("teams") and team not in manifest["teams"]:
         problems.append(f"{LOCAL_FILE} names team {team!r}, which workspace.json does not list: {manifest['teams']}.")
     problems += skill_problems(workspace)
+    agents = workspace / "AGENTS.md"
+    if agents.is_file():
+        lines = len(agents.read_text(encoding="utf-8").splitlines())
+        if lines > AGENTS_LINE_LIMIT:
+            warnings.append(f"AGENTS.md has {lines} lines, over {AGENTS_LINE_LIMIT}: every session here loads it whole. Move procedures that only "
+                            "some tasks need into workspace skills or .ai/<topic>.md files.")
 
     missing = [r["name"] for r in manifest["repos"] if not (workspace / r["path"] / ".git").exists()]
     if missing:
@@ -392,6 +449,8 @@ def main(argv: list[str]) -> int:
     clone_parser = sub.add_parser("clone", help="clone the listed repositories that are not here yet")
     clone_parser.add_argument("--name", action="append", default=[], help="only this repository; repeat for more")
     clone_parser.add_argument("--team", default="", help="also record the team in CLAUDE.local.md")
+    update_parser = sub.add_parser("update", help="pull the workspace, clone new repositories, fast-forward the others")
+    update_parser.add_argument("--name", action="append", default=[], help="only this repository; repeat for more")
     local_parser = sub.add_parser("local", help="create or update CLAUDE.local.md with the user's team")
     local_parser.add_argument("--team", required=True)
     check_parser = sub.add_parser("check", help="report what is still to do: team, tools, repositories, skills")
@@ -401,6 +460,8 @@ def main(argv: list[str]) -> int:
     try:
         if args.command == "clone":
             report = clone(WORKSPACE, args.name, args.team)
+        elif args.command == "update":
+            report = update(WORKSPACE, args.name)
         elif args.command == "local":
             report = {"ok": True, **set_local_team(WORKSPACE, args.team)}
         elif args.command == "check":

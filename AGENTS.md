@@ -9,7 +9,7 @@ This repository is ai-starter, a generator. It is never onboarded and holds no p
   `template/` (for example the `template:repo-*` skills or the onboarding gate in `template/AGENTS.md`).
 - `workspace-template/`: files for a workspace root: `AGENTS.md` with a generated repository table, `README.md` for people, `CLAUDE.md`, a whitelist `.gitignore`,
   the guard hook settings, the `workspace-*` skills in `.agents/skills/` with their `.claude/skills/` links,
-  `.ai/workspace.py` (the workspace's own `clone`, `local`, `check`, and `skills sync` commands), and `.ai/CLAUDE.local.example.md`, the template of each person's ignored `CLAUDE.local.md`. It runs without the starter, so it uses only the standard library and imports nothing from `tool/`;
+  `.ai/workspace.py` (the workspace's own `clone`, `update`, `local`, `check`, and `skills sync` commands), and `.ai/CLAUDE.local.example.md`, the template of each person's ignored `CLAUDE.local.md`. It runs without the starter, so it uses only the standard library and imports nothing from `tool/`;
   the starter's `workspace clone` loads it through `paths.workspace_tool()` instead of keeping a second copy of its logic.
 - `tool/starter.py`: the generator's entry point. Workspace commands (`adopt`, `unregister`, `sync`, `workspace`) change only a workspace's
   root files, except `workspace clone`, which also clones the listed repositories from their remotes; harness commands (`harness install`, `harness upgrade`, `harness status`) work on one repository, listed in a workspace or not;

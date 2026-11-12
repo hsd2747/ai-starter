@@ -54,3 +54,4 @@ Mention that the team can add skills under `.agents/skills/`, as `README.md` des
 ## 8. Finish
 
 Run `python3 .ai/workspace.py check` again. Report what is done, what is left with the next action for each, and suggest a first task that fits the user's team.
+Mention `python3 .ai/workspace.py update` for keeping the workspace and every repository current, especially before reading code for planning.
