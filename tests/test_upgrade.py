@@ -84,6 +84,24 @@ class UpgradeTest(UpgradeCase):
         self.assertEqual(code, 0, report)
         self.assertTrue(report["targets"][1]["blockers"])
 
+    def test_root_only_upgrades_the_root_past_a_blocked_repository(self):
+        repo = self.create()
+        self.change_starter_for_both_targets()
+        self.edit(self.fake / "workspace-template/.gitignore", ".DS_Store", ".DS_Store\nroot-only-line")
+        commit_all(self.fake)
+        self.edit(repo / "AGENTS.md", "## Goals", "## Goals (local draft)")
+        repo_before = snapshot(repo)
+        self.assertEqual(run("upgrade", "--workspace", str(self.ws))[0], 1)
+
+        code, report = run("upgrade", "--workspace", str(self.ws), "--root-only")
+        self.assertEqual(code, 0, report)
+        self.assertEqual([t["target"] for t in report["targets"]], ["workspace"])
+        self.assertIn("root-only-line", (self.ws / ".gitignore").read_text(encoding="utf-8"))
+        recorded = json.loads((self.ws / "workspace.json").read_text(encoding="utf-8"))["starter"]["commit"]
+        self.assertEqual(recorded, git(self.fake, "rev-parse", "HEAD").strip())
+        self.assertEqual(snapshot(repo), repo_before)
+        self.assertEqual(run("upgrade", "--workspace", str(self.ws), "--root-only", "--name", "be")[0], 1)
+
     def test_invalid_harness_record_blocks_its_repository(self):
         repo = self.create()
         record = json.loads((repo / ".ai/harness.json").read_text(encoding="utf-8"))

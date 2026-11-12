@@ -264,8 +264,11 @@ def _plan_workspace(workspace: Path, manifest: dict, version: dict, listings: di
     return target
 
 
-def run(workspace_path: str, names: list[str], dry_run: bool) -> dict:
-    """Upgrades the workspace root and every repository in it that has the harness, or only the repositories in `names`."""
+def run(workspace_path: str, names: list[str], dry_run: bool, root_only: bool = False) -> dict:
+    """Upgrades the workspace root and every repository in it that has the harness, only the repositories in `names`,
+    or with `root_only` only the workspace root, so that a blocked repository does not hold the root back."""
+    if root_only and names:
+        raise StarterError("--root-only and --name exclude each other: the first upgrades only the workspace root, the second only repositories.")
     workspace = resolve_workspace(workspace_path)
     manifest = load_workspace(workspace)
     if manifest is None:
@@ -280,7 +283,7 @@ def run(workspace_path: str, names: list[str], dry_run: bool) -> dict:
 
     listings: dict = {}
     targets = [_plan_workspace(workspace, manifest, version, listings)] if not names else []
-    chosen = names or [r["name"] for r in manifest["repos"] if repo_kind(workspace, r) == "managed"]
+    chosen = [] if root_only else names or [r["name"] for r in manifest["repos"] if repo_kind(workspace, r) == "managed"]
     targets += [_plan_repository(name, workspace / repos[name]["path"], version, listings) for name in chosen]
     result = _apply(targets, version, dry_run)
     if not dry_run:

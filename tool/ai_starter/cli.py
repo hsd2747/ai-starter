@@ -60,8 +60,9 @@ Both:
 
   new   --workspace PATH --name NAME [--role TEXT] [--remote URL]
         Create PATH/NAME with the harness, register it, and initialize the workspace on first use.
-  upgrade --workspace PATH [--name NAME ...] [--dry-run]
-        Upgrade the workspace root and every listed repository that has the harness, or only the named repositories.
+  upgrade --workspace PATH [--name NAME ... | --root-only] [--dry-run]
+        Upgrade the workspace root and every listed repository that has the harness, only the named repositories,
+        or with --root-only only the workspace root's own files.
         Every file it would write must be committed and unmodified; otherwise nothing is written. Conflicts are left as markers and listed.
 
 Output is JSON. Exit codes: 0 ok, 1 usage error, conflict, invalid manifest, or filesystem error,
@@ -193,7 +194,7 @@ def cmd_sync(args: argparse.Namespace) -> dict:
 
 
 def cmd_upgrade(args: argparse.Namespace) -> dict:
-    return upgrade.run(args.workspace, args.name, args.dry_run)
+    return upgrade.run(args.workspace, args.name, args.dry_run, args.root_only)
 
 
 def _refuse_conflicts(repo: Path, files: list[str]) -> None:
@@ -280,6 +281,7 @@ def _parser() -> argparse.ArgumentParser:
     upgrade.add_argument("--workspace", required=True)
     upgrade.add_argument("--name", action="append", default=[])
     upgrade.add_argument("--dry-run", action="store_true")
+    upgrade.add_argument("--root-only", action="store_true")
     harness = sub.add_parser("harness", add_help=False)
     harness.add_argument("action", choices=["install", "upgrade", "status"])
     harness.add_argument("--repo", required=True)

@@ -11,7 +11,9 @@ The generator plans and merges by itself and writes nothing when a check fails. 
 
 - One repository given by path, or one that no workspace lists: use `harness upgrade --repo <path>`. It needs no workspace and writes only inside the repository.
 - Otherwise choose the workspace with [choose-workspace.md](../starter-workspace/references/choose-workspace.md) and use `upgrade --workspace`.
-  Without a named repository it covers the workspace root and every listed `managed` repository; with `--name` only those repositories.
+  Without a named repository it covers the workspace root and every listed `managed` repository; with `--name` only those repositories;
+  with `--root-only` only the workspace root. A request to update "the workspace" means the root only: use `--root-only`, and ask before
+  upgrading any repository's harness.
 - A `registered` repository has no harness; offer `starter-install-harness` instead.
 
 ## 2. Plan
@@ -19,7 +21,7 @@ The generator plans and merges by itself and writes nothing when a check fails. 
 Run from this starter's root, one of:
 
 ```bash
-python3 tool/starter.py upgrade --workspace <path> [--name <name> ...] --dry-run
+python3 tool/starter.py upgrade --workspace <path> [--name <name> ... | --root-only] --dry-run
 python3 tool/starter.py harness upgrade --repo <path> --dry-run
 ```
 

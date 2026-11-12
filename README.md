@@ -55,6 +55,16 @@ python3 tool/starter.py workspace clone --path ~/work/my-product                
 python3 tool/starter.py workspace clone --path ~/work/my-product --name be                                            # only some of them
 ```
 
+A teammate does not need this starter for that. Every workspace carries the same code as `.ai/workspace.py`, and its `AGENTS.md` says how to use it:
+
+```bash
+git clone git@example.com:team/my-product-workspace.git ~/work/my-product && cd ~/work/my-product
+python3 .ai/workspace.py clone [--name be]
+```
+
+The starter's `workspace clone` runs that file from `workspace-template/`, and adds the root clone from `--url`, the full schema check,
+warnings about starter commits it lacks, and the saved workspace list. Older workspaces get the file with `upgrade --root-only`.
+
 `workspace clone` clones the workspace repository into an empty or missing folder when `--url` is given, then every listed repository
 that is not there yet from its remote, and connects the pre-commit hook in those with the harness. It never touches a repository that is already there,
 skips entries without a remote, and stops before cloning anything when a path holds a folder that is not a git repository.
@@ -87,6 +97,7 @@ This is the only change outside the files, and it touches only the repository's 
 python3 tool/starter.py upgrade --workspace ~/work/my-product --dry-run   # plan for the workspace root and every managed repository
 python3 tool/starter.py upgrade --workspace ~/work/my-product             # apply
 python3 tool/starter.py upgrade --workspace ~/work/my-product --name be   # one listed repository only
+python3 tool/starter.py upgrade --workspace ~/work/my-product --root-only  # the workspace root only, no repository
 python3 tool/starter.py harness upgrade --repo ~/work/solo                # a repository no workspace lists
 ```
 
@@ -151,6 +162,7 @@ my-product/                  # its own git repository; tracks only the files bel
 ├── .gitignore               # ignores every repository folder
 ├── .claude/settings.json    # guard hook for sessions opened at the workspace root
 ├── .ai/guard/               # copy of the guard the hook runs
+├── .ai/workspace.py         # `clone`: clones the listed repositories, no starter needed
 ├── be/                      # managed: has the harness
 └── admin/                   # registered: role only
 ```

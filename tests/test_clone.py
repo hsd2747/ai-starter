@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -65,6 +66,28 @@ class CloneTest(WorkspaceCase):
         self.assertFalse(report["workspaceCloned"])
         self.assertEqual(([c["name"] for c in report["cloned"]], report["skipped"]), (["be"], []))
         self.assertEqual(run("workspace", "clone", "--path", str(mate), "--name", "web")[0], 1)
+
+    def test_a_plain_clone_of_the_workspace_can_clone_its_repositories_without_the_starter(self):
+        url = self.share()
+        mate = self.base / "mate"
+        git(self.base, "clone", "-q", str(url), str(mate))
+        self.assertTrue((mate / ".ai/workspace.py").is_file())
+        elsewhere = self.base / "elsewhere"
+        elsewhere.mkdir()
+        process = subprocess.run([sys.executable, "-I", str(mate / ".ai/workspace.py"), "clone"], cwd=elsewhere,
+                                 capture_output=True, text=True)
+        self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+        report = json.loads(process.stdout)
+        self.assertEqual([c["name"] for c in report["cloned"]], ["be"])
+        self.assertEqual(report["skipped"], [{"name": "legacy", "reason": "no remote in workspace.json"}])
+        hooks = subprocess.run(["git", "config", "core.hooksPath"], cwd=mate / "be", capture_output=True, text=True).stdout.strip()
+        self.assertEqual(hooks, ".githooks")
+        self.assertEqual(leftovers(mate), [])
+        self.assertEqual(run("workspace", "list")[1]["workspaces"][0]["path"], str(self.ws.resolve()), "the tool never writes the starter's list")
+
+        again = subprocess.run([sys.executable, str(mate / ".ai/workspace.py"), "clone", "--name", "web"], capture_output=True, text=True)
+        self.assertEqual(again.returncode, 1)
+        self.assertIn("web", json.loads(again.stdout)["error"])
 
     def test_a_folder_in_the_way_stops_before_any_clone(self):
         url = self.share()

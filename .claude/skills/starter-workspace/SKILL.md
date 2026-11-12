@@ -42,6 +42,8 @@ The workspace repository works like a manifest: teammates clone it and then ever
   `python3 tool/starter.py workspace clone --path <path> --url <url>` from this starter's root. For a workspace that is already there, for example after a pull
   that added a repository, omit `--url`; `--name <repo>` limits it to some repositories. Report `cloned`, `present`, `skipped` with their reasons, and warnings.
   A clone that fails on authentication means the user's git cannot reach that remote yet; suggest they check their access with `! git ls-remote <remote>`, never a URL with a token.
+- Teammates do not need this starter: a workspace carries `.ai/workspace.py`, so `git clone <url> <folder>` and `python3 .ai/workspace.py clone` inside it do the same.
+  A workspace made before that file existed gets it with `upgrade --workspace <path> --root-only` (`starter-upgrade`); commit and push it before teammates rely on it.
 - Each cloned repository still needs its own local setup, such as dependencies and environment files made from their examples; point to its README instead of doing it unasked.
 
 ## Commit

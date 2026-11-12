@@ -62,7 +62,7 @@ The skills run these from this starter's root; show them only to a user who want
 
 | Area | Command |
 | --- | --- |
-| Both | `new --workspace PATH --name NAME [--role TEXT]`, `upgrade --workspace PATH [--name NAME] [--dry-run]` |
+| Both | `new --workspace PATH --name NAME [--role TEXT]`, `upgrade --workspace PATH [--name NAME \| --root-only] [--dry-run]` |
 | Workspace | `adopt --workspace PATH --path REL [--install]`, `unregister --workspace PATH --name NAME`, `sync --workspace PATH`, `workspace list \| add \| remove \| clone` |
 | Harness | `harness install \| upgrade \| status --repo PATH` |
 

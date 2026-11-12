@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit
 
 from . import paths
 from .paths import StarterError
@@ -52,23 +51,8 @@ def known_commit(commit: str | None) -> bool:
 
 
 def _split_credentials(url: str) -> tuple[str, bool]:
-    """The URL without secrets in its user part, and whether it had any.
-
-    Over http(s) the whole user part is a credential (a token or user:password); for ssh-style URLs only a password is, so
-    `ssh://git@host/...` and `git@host:org/repo.git` stay as they are.
-    """
-    try:
-        parts = urlsplit(url)
-    except ValueError:
-        return url, False
-    if not parts.scheme or "@" not in parts.netloc:
-        return url, False
-    userinfo, host = parts.netloc.rsplit("@", 1)
-    if parts.scheme.lower() in ("http", "https"):
-        return urlunsplit(parts._replace(netloc=host)), True
-    if ":" in userinfo:
-        return urlunsplit(parts._replace(netloc=userinfo.split(":", 1)[0] + "@" + host)), True
-    return url, False
+    """The URL without credentials, and whether it had any, by the rule the workspace's own clone applies."""
+    return paths.workspace_tool().split_credentials(url)
 
 
 def has_credentials(url: str) -> bool:

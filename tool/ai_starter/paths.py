@@ -6,7 +6,10 @@ importing them by name, so that tests can point them at a throwaway copy of the 
 
 from __future__ import annotations
 
+import importlib.util
+import sys
 from pathlib import Path
+from types import ModuleType
 
 STARTER = Path(__file__).resolve().parents[2]
 TEMPLATE = STARTER / "template"
@@ -20,6 +23,24 @@ GUARD_DIR = ".ai/guard"
 
 class StarterError(Exception):
     pass
+
+
+WORKSPACE_TOOL = ".ai/workspace.py"
+
+
+def workspace_tool() -> ModuleType:
+    """The workspace's own command module, workspace-template/.ai/workspace.py, which a workspace runs without this starter.
+
+    The starter runs the same code for `workspace clone`, so the two never drift. Loaded from WORKSPACE_TEMPLATE at call time.
+    """
+    source = WORKSPACE_TEMPLATE / WORKSPACE_TOOL
+    name = f"ai_starter_workspace_tool_{abs(hash(str(source)))}"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, source)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+    return sys.modules[name]
 
 
 def resolve_workspace(raw: str) -> Path:

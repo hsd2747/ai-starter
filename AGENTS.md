@@ -7,7 +7,9 @@ This repository is ai-starter, a generator. It is never onboarded and holds no p
 - `template/`: everything copied into a new or adopted repository. Its `AGENTS.md`, skills, and `.claude/` are the policy of
   **generated** repositories. They do not govern work on this starter, even when a tool loads them while you edit files under
   `template/` (for example the `template:repo-*` skills or the onboarding gate in `template/AGENTS.md`).
-- `workspace-template/`: files for a workspace root: `AGENTS.md` with a generated repository table, `CLAUDE.md`, a whitelist `.gitignore`, and the guard hook settings.
+- `workspace-template/`: files for a workspace root: `AGENTS.md` with a generated repository table, `CLAUDE.md`, a whitelist `.gitignore`, the guard hook settings,
+  and `.ai/workspace.py`, the workspace's own `clone` command. It runs without the starter, so it uses only the standard library and imports nothing from `tool/`;
+  the starter's `workspace clone` loads it through `paths.workspace_tool()` instead of keeping a second copy of its logic.
 - `tool/starter.py`: the generator's entry point. Workspace commands (`adopt`, `unregister`, `sync`, `workspace`) change only a workspace's
   root files, except `workspace clone`, which also clones the listed repositories from their remotes; harness commands (`harness install`, `harness upgrade`, `harness status`) work on one repository, listed in a workspace or not;
   `new`, `adopt --install`, and `upgrade` combine both. Python 3.10+, standard library only.
@@ -36,7 +38,7 @@ This repository is ai-starter, a generator. It is never onboarded and holds no p
   that the starter skills read. It never writes into this starter, never overwrites an existing file, and validates everything before
   its first write. `tests/` pins these rules and redirects the list with `AI_STARTER_REGISTRY`; keep them passing.
 - Every file the generator writes goes through `files.Staging` (or `files.write_atomic` for a single file), never through a direct write,
-  so that a failure leaves its targets as they were. The one exception is a clone by `workspace clone`: git writes it into a temporary folder
+  so that a failure leaves its targets as they were. The one exception is a clone by `workspace clone` (and `.ai/workspace.py clone`): git writes it into a temporary folder
   inside the workspace, and it is moved into place whole only after it succeeds. Writes that belong together, such as the files of one command, share one `Staging`.
 - Every read and write of `workspace.json`, `.ai/harness.json`, and the saved workspace list goes through the schemas in `tool/schemas/`.
   A field added to one of these files is added to its schema in the same change; files that existing workspaces already hold must stay valid.
