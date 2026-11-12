@@ -24,7 +24,8 @@ in every session there, and read by other agents as AGENTS.md says. It is made f
 first time; later only its `Team:` line is changed.
 
 `check` reports what a new member still has to do: personal files that git tracks, no team recorded, missing tools,
-listed repositories not cloned yet, and skills without a valid SKILL.md or a Claude Code link; `--access` also asks each
+listed repositories not cloned yet, and skills without a valid SKILL.md or a Claude Code link. It also warns about a team in
+`teams` without its rules file in .ai/teams/<team>.md, and a file there for no listed team. `--access` also asks each
 remote whether the user can read it. `skills sync` links every skill in .agents/skills into .claude/skills, where Claude Code
 looks for them; it never deletes or overwrites.
 
@@ -54,6 +55,8 @@ LOCAL_EXAMPLE = ".ai/CLAUDE.local.example.md"
 PERSONAL_FILES = [LOCAL_FILE, ".claude/settings.local.json"]
 TEAM_LINE = re.compile(r"^Team:[ \t]*(.*?)[ \t]*$", re.MULTILINE)
 TEAM_NAME = re.compile(r"[a-z][a-z0-9-]{0,31}\Z")
+# One file of rules for each team in workspace.json `teams`, read by members of that team.
+TEAMS_DIR = ".ai/teams"
 # The only copy of each skill; .claude/skills holds links to it, as in repositories with the harness.
 SKILLS_DIR = ".agents/skills"
 CLAUDE_SKILLS_DIR = ".claude/skills"
@@ -387,6 +390,19 @@ def skill_problems(workspace: Path) -> list[str]:
     return problems
 
 
+def team_warnings(workspace: Path, teams: list[str]) -> list[str]:
+    """A listed team without its rules file, and a rules file for no listed team. Neither blocks work."""
+    folder = workspace / TEAMS_DIR
+    warnings = []
+    missing = [t for t in teams if not (folder / f"{t}.md").is_file()]
+    if missing:
+        warnings.append(f"No rules file for teams {missing}: create {TEAMS_DIR}/<team>.md for each, even if it only says the team has no rules of its own yet.")
+    unknown = sorted(p.stem for p in folder.glob("*.md") if p.stem not in teams) if folder.is_dir() else []
+    if unknown:
+        warnings.append(f"{TEAMS_DIR} has files for teams that workspace.json does not list: {unknown}. Add the team to `teams` or remove the file.")
+    return warnings
+
+
 def _git_version() -> str | None:
     try:
         return subprocess.run(["git", "--version"], capture_output=True, text=True).stdout.strip() or None
@@ -415,6 +431,7 @@ def check(workspace: Path, access: bool = False) -> dict:
         problems.append(f"No team is recorded in {LOCAL_FILE}; run `python3 .ai/workspace.py local --team <team>`.")
     elif manifest.get("teams") and team not in manifest["teams"]:
         problems.append(f"{LOCAL_FILE} names team {team!r}, which workspace.json does not list: {manifest['teams']}.")
+    warnings += team_warnings(workspace, manifest.get("teams", []))
     problems += skill_problems(workspace)
     agents = workspace / "AGENTS.md"
     if agents.is_file():

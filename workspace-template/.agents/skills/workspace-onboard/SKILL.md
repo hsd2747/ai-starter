@@ -18,6 +18,7 @@ Summarize `problems` first, then `warnings`, in plain words. Use the rest of thi
 
 With no team recorded, read `teams` in `workspace.json`, ask which one the user is on, and run `python3 .ai/workspace.py local --team <team>`.
 Explain that `CLAUDE.local.md` is theirs alone, ignored by git and loaded in every session here, and that rules marked with a team in `AGENTS.md` follow it.
+Show `.ai/teams/<team>.md`, the rules for their team, and summarize it in a few plain lines.
 
 ## 3. Repositories and access
 

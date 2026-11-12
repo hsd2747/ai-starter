@@ -296,6 +296,28 @@ class CloneTest(WorkspaceCase):
         self.assertEqual(self.tool(mate, "local", "--team", "anything")[0], 0, "without a teams list any valid name is accepted")
         self.assertEqual(self.tool(mate, "check")[0], 0)
 
+    def test_check_warns_about_teams_without_a_rules_file(self):
+        url = self.share()
+        mate = self.base / "mate"
+        self.assertEqual(run("workspace", "clone", "--path", str(mate), "--url", str(url), "--team", "dev")[0], 0)
+        self.assertFalse(any(".ai/teams" in w for w in self.tool(mate, "check")[1]["warnings"]), "no teams listed, nothing to warn about")
+
+        manifest = json.loads((mate / "workspace.json").read_text(encoding="utf-8"))
+        manifest["teams"] = ["dev", "pm"]
+        (mate / "workspace.json").write_text(json.dumps(manifest), encoding="utf-8")
+        teams = mate / ".ai" / "teams"
+        teams.mkdir()
+        (teams / "dev.md").write_text("# dev\n", encoding="utf-8")
+        (teams / "qa.md").write_text("# qa\n", encoding="utf-8")
+        code, report = self.tool(mate, "check")
+        self.assertEqual(code, 0, "a missing team file is a warning, not a problem")
+        self.assertTrue(any("No rules file" in w and "'pm'" in w and "'dev'" not in w for w in report["warnings"]), report["warnings"])
+        self.assertTrue(any("does not list" in w and "'qa'" in w for w in report["warnings"]), report["warnings"])
+
+        (teams / "pm.md").write_text("# pm\n", encoding="utf-8")
+        (teams / "qa.md").unlink()
+        self.assertFalse(any(".ai/teams" in w or "No rules file" in w for w in self.tool(mate, "check")[1]["warnings"]))
+
 
 if __name__ == "__main__":
     unittest.main()

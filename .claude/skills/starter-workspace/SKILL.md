@@ -21,7 +21,8 @@ First choose the workspace with [choose-workspace.md](references/choose-workspac
 ## Workspace rules
 
 Rules that only this workspace has go between the `workspace:rules` markers of the workspace `AGENTS.md`, where upgrades keep them; never edit the
-starter's sections around them for that. Mark a rule that only some teams follow, such as "(dev)". The file stays under 200 lines because every session
+starter's sections around them for that. Rules for one team go into `.ai/teams/<team>.md`, one file for each team in `teams`; a single line elsewhere
+that only some teams follow gets a team mark such as "(dev)". The file stays under 200 lines because every session
 loads it whole: a procedure that only some tasks need becomes a workspace skill or a `.ai/<topic>.md` file that one rule line points to.
 `python3 <workspace>/.ai/workspace.py check` warns past the limit. Propose the change and write it after approval.
 
@@ -48,8 +49,8 @@ The workspace repository works like a manifest: teammates clone it and then ever
 - **Separate personal values before sharing.** Read the tracked files (`git -C <workspace> ls-files`, skipping `.ai/guard/`) and list what belongs to one person:
   names, account IDs, personal paths, and preferences worded as one user's standing request. Ask whether each is personal or a team rule; mask the values in the
   list you show. A personal value that a tool can look up at run time (for example the current Jira user) becomes a lookup; the rest moves to that person's
-  `CLAUDE.local.md`. A team rule that only some teams follow gets a team mark such as "(dev)". Record the team names in `workspace.json` as `teams`,
-  then run `python3 <workspace>/.ai/workspace.py local --team <team>` for the user and `check`. Git history keeps removed values; say so, and rewrite history only if the user asks.
+  `CLAUDE.local.md`. A team rule goes into `.ai/teams/<team>.md`, or gets a team mark such as "(dev)" where it sits. Record the team names in `workspace.json` as `teams`,
+  create `.ai/teams/<team>.md` for each, then run `python3 <workspace>/.ai/workspace.py local --team <team>` for the user and `check`. Git history keeps removed values; say so, and rewrite history only if the user asks.
 - **Clone a teammate's workspace.** Ask for the workspace repository URL, a local path, and the user's team, then run
   `python3 tool/starter.py workspace clone --path <path> --url <url> --team <team>` from this starter's root. For a workspace that is already there, for example after a pull
   that added a repository, omit `--url`; `--name <repo>` limits it to some repositories. Report `cloned`, `present`, `skipped`, and `failed` with their reasons, and warnings.

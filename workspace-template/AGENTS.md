@@ -40,6 +40,8 @@ and reports one that has diverged. It never stashes, resets, merges, or switches
 `.ai/CLAUDE.local.example.md`, and Claude Code loads it in every session here. Other agents read it before their first task in this folder.
 Its `Team:` line names the user's team, one of the `teams` in `workspace.json`.
 
+- Each team in `teams` has its own rules in `.ai/teams/<team>.md`. Read the file for the user's team before the first task in this folder.
+  A team added to `teams` gets its file in the same change; `python3 .ai/workspace.py check` warns about a team without one.
 - A rule or section marked with teams, such as "(dev)", applies only to members of those teams; an unmarked rule applies to everyone.
 - With no team recorded, ask for it before a team-marked task, and suggest `python3 .ai/workspace.py local --team <team>`.
 - Never write one person's values into a shared file: names, account IDs, personal paths, or anything from `CLAUDE.local.md`.
