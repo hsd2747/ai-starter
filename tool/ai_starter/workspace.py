@@ -1,20 +1,31 @@
-"""A workspace root: its files, workspace.json, and the generated repository table in its AGENTS.md."""
+"""A workspace root: its files, workspace.json, and the generated repository table in its AGENTS.md.
+
+Registering, unregistering, and the table are the workspace's own code in workspace-template/.ai/workspace.py, so that a
+teammate can run them without this starter. This module adds the full schema check and writes through Staging.
+"""
 
 from __future__ import annotations
 
+import contextlib
 import os
-import re
 from pathlib import Path
 
 from . import paths
 from .files import Staging, tree_files, write_atomic
 from .gitutil import init_repo
 from .manifests import load_manifest, manifest_bytes
-from .paths import GUARD_DIR, HARNESS_RECORD, WORKSPACE_FILE, StarterError
+from .paths import GUARD_DIR, WORKSPACE_FILE, StarterError
 
-REPOS_START = "<!-- workspace:repos:start -->"
-REPOS_END = "<!-- workspace:repos:end -->"
-REPO_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
+
+
+@contextlib.contextmanager
+def _tool_errors():
+    """The workspace tool's errors as StarterError, which the CLI reports."""
+    tool = paths.workspace_tool()
+    try:
+        yield tool
+    except tool.WorkspaceError as error:
+        raise StarterError(str(error)) from None
 
 
 def load_workspace(workspace: Path) -> dict | None:
@@ -29,15 +40,12 @@ def load_workspace(workspace: Path) -> dict | None:
 
 
 def repo_kind(workspace: Path, repo: dict) -> str:
-    return "managed" if (workspace / repo["path"] / HARNESS_RECORD).is_file() else "registered"
+    return paths.workspace_tool().repo_kind(workspace, repo)
 
 
 def check_new_entry(manifest: dict | None, name: str, path: str) -> None:
-    if not REPO_NAME.match(name):
-        raise StarterError(f"Invalid repository name {name!r}: letters, digits, '.', '_', '-', up to 64 characters.")
-    for repo in (manifest or {}).get("repos", []):
-        if repo["name"] == name or repo["path"] == path:
-            raise StarterError(f"The workspace already registers {repo['name']!r} at {repo['path']!r}.")
+    with _tool_errors() as tool:
+        tool.check_new_entry(manifest, name, path)
 
 
 def check_workspace_free(workspace: Path) -> None:
@@ -76,28 +84,10 @@ def ensure_workspace(workspace: Path, version: dict) -> list[str]:
     return [*created, GUARD_DIR + "/", WORKSPACE_FILE]
 
 
-def _cell(value: str) -> str:
-    return value.replace("|", "\\|").replace("\n", " ").strip() or "-"
-
-
-def render_repos(workspace: Path, repos: list[dict]) -> str:
-    if not repos:
-        return "No repositories yet."
-    rows = ["| Repository | Path | Role | Harness | Remote |", "| --- | --- | --- | --- | --- |"]
-    for repo in repos:
-        rows.append(f"| {_cell(repo['name'])} | `{repo['path']}/` | {_cell(repo.get('role', ''))} | {repo_kind(workspace, repo)} | {_cell(repo.get('remote', ''))} |")
-    return "\n".join(rows)
-
-
 def _agents_with_table(workspace: Path, repos: list[dict]) -> tuple[bytes | None, str | None]:
     """The workspace AGENTS.md with its generated table rewritten, or a warning when the markers are gone."""
-    path = workspace / "AGENTS.md"
-    text = path.read_text(encoding="utf-8") if path.is_file() else ""
-    start, end = text.find(REPOS_START), text.find(REPOS_END)
-    if start == -1 or end < start:
-        return None, f"{path}: repository markers are missing; the table was not updated. Restore {REPOS_START} and {REPOS_END}."
-    body = f"{REPOS_START}\n{render_repos(workspace, repos)}\n"
-    return (text[:start] + body + text[end:]).encode("utf-8"), None
+    text, warning = paths.workspace_tool().agents_with_table(workspace, repos)
+    return (None if text is None else text.encode("utf-8")), warning
 
 
 def sync_agents(workspace: Path, repos: list[dict]) -> str | None:
@@ -109,30 +99,18 @@ def sync_agents(workspace: Path, repos: list[dict]) -> str | None:
 
 
 def entry_at(manifest: dict | None, path: str) -> dict | None:
-    return next((r for r in (manifest or {}).get("repos", []) if r["path"] == path), None)
+    return paths.workspace_tool().entry_at(manifest, path)
 
 
 def register(workspace: Path, entry: dict) -> list[str]:
     """Adds the entry, or replaces the one at the same path when a registered repository gets the harness."""
-    manifest = load_workspace(workspace)
-    repos = manifest["repos"]
-    index = next((i for i, r in enumerate(repos) if r["path"] == entry["path"]), None)
-    if index is None:
-        repos.append(entry)
-    else:
-        repos[index] = entry
-    return _save_repos(workspace, manifest)
+    return _save_repos(workspace, paths.workspace_tool().with_repo(load_workspace(workspace), entry))
 
 
 def unregister(workspace: Path, name: str) -> tuple[dict, list[str]]:
     """Removes the named entry from workspace.json and the table. The repository folder is never touched."""
-    manifest = load_workspace(workspace)
-    repos = manifest["repos"]
-    entry = next((r for r in repos if r["name"] == name), None)
-    if entry is None:
-        known = [r["name"] for r in repos]
-        raise StarterError(f"The workspace has no repository named {name!r}; registered: {known}.")
-    repos.remove(entry)
+    with _tool_errors() as tool:
+        manifest, entry = tool.without_repo(load_workspace(workspace), name)
     return entry, _save_repos(workspace, manifest)
 
 

@@ -69,8 +69,8 @@ def check_remote(url: str) -> str:
 
 def origin_url(repo: Path) -> tuple[str, list[str]]:
     """The repository's origin remote with any credentials removed, for workspace.json; empty when it has none."""
-    url = git(repo, "remote", "get-url", "origin", check=False)
-    clean, stripped = _split_credentials(url)
-    warnings = [f"The origin URL of {repo} contains credentials; workspace.json records it without them. "
-                "Consider moving them to a credential helper."] if stripped else []
-    return clean, warnings
+    tool = paths.workspace_tool()
+    try:
+        return tool.origin_url(repo)
+    except tool.WorkspaceError as error:
+        raise StarterError(str(error)) from None

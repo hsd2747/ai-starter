@@ -9,8 +9,9 @@ This repository is ai-starter, a generator. It is never onboarded and holds no p
   `template/` (for example the `template:repo-*` skills or the onboarding gate in `template/AGENTS.md`).
 - `workspace-template/`: files for a workspace root: `AGENTS.md` with a generated repository table, `README.md` for people, `CLAUDE.md`, a whitelist `.gitignore`,
   the guard hook settings, the `workspace-*` skills in `.agents/skills/` with their `.claude/skills/` links,
-  `.ai/workspace.py` (the workspace's own `clone`, `update`, `local`, `check`, and `skills sync` commands), and `.ai/CLAUDE.local.example.md`, the template of each person's ignored `CLAUDE.local.md`. It runs without the starter, so it uses only the standard library and imports nothing from `tool/`;
-  the starter's `workspace clone` loads it through `paths.workspace_tool()` instead of keeping a second copy of its logic.
+  `.ai/workspace.py` (the workspace's own `clone`, `update`, `local`, `check`, `skills sync`, `register`, `unregister`, `sync`, and `team add` commands), and `.ai/CLAUDE.local.example.md`, the template of each person's ignored `CLAUDE.local.md`. It runs without the starter, so it uses only the standard library and imports nothing from `tool/`;
+  the starter's `workspace clone`, `adopt`, `unregister`, and `sync` load it through `paths.workspace_tool()` instead of keeping a second copy of its logic,
+  and add the schema check and `Staging` writes on top.
 - `tool/starter.py`: the generator's entry point. Workspace commands (`adopt`, `unregister`, `sync`, `workspace`) change only a workspace's
   root files, except `workspace clone`, which also clones the listed repositories from their remotes; harness commands (`harness install`, `harness upgrade`, `harness status`) work on one repository, listed in a workspace or not;
   `new`, `adopt --install`, and `upgrade` combine both. Python 3.10+, standard library only.
@@ -42,6 +43,8 @@ This repository is ai-starter, a generator. It is never onboarded and holds no p
   so that a failure leaves its targets as they were. The one exception is a clone by `workspace clone` (and `.ai/workspace.py clone`): git writes it into a temporary folder
   inside the workspace, and it is moved into place whole only after it succeeds. Writes that belong together, such as the files of one command, share one `Staging`.
 - Every read and write of `workspace.json`, `.ai/harness.json`, and the saved workspace list goes through the schemas in `tool/schemas/`.
+  The one exception is the workspace's own `.ai/workspace.py`, which runs without the starter: it writes only the `repos` and `teams` entries of `workspace.json`,
+  checks them by the same rules (name patterns, clean path, string fields), and keeps every other field as it was. `tests/test_workspace_register.py` pins that both write the same bytes.
   A field added to one of these files is added to its schema in the same change; files that existing workspaces already hold must stay valid.
 - `upgrade` and `harness upgrade` are the only commands that change files the starter installed earlier: only those files, only when git shows every file
   they would write as committed and unmodified, and only by a 3-way merge against the recorded starter commit. They never delete a file.

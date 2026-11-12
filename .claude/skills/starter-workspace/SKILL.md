@@ -5,6 +5,9 @@ description: Maintain a workspace's root files through conversation: repository 
 
 # Workspace upkeep
 
+Teammates without this starter do the same work inside the workspace with its own skills: `workspace-repos` for the repository list and
+`workspace-rules` for rules, teams, contracts, and onboarding steps. Keep the two in step when changing either.
+
 The workspace `AGENTS.md` is read only by sessions opened at the workspace root. CI and a teammate who clones a single repository never see it.
 
 First choose the workspace with [choose-workspace.md](references/choose-workspace.md). The saved list itself is managed with
@@ -49,8 +52,8 @@ The workspace repository works like a manifest: teammates clone it and then ever
 - **Separate personal values before sharing.** Read the tracked files (`git -C <workspace> ls-files`, skipping `.ai/guard/`) and list what belongs to one person:
   names, account IDs, personal paths, and preferences worded as one user's standing request. Ask whether each is personal or a team rule; mask the values in the
   list you show. A personal value that a tool can look up at run time (for example the current Jira user) becomes a lookup; the rest moves to that person's
-  `CLAUDE.local.md`. A team rule goes into `.ai/teams/<team>.md`, or gets a team mark such as "(dev)" where it sits. Record the team names in `workspace.json` as `teams`,
-  create `.ai/teams/<team>.md` for each, then run `python3 <workspace>/.ai/workspace.py local --team <team>` for the user and `check`. Git history keeps removed values; say so, and rewrite history only if the user asks.
+  `CLAUDE.local.md`. A team rule goes into `.ai/teams/<team>.md`, or gets a team mark such as "(dev)" where it sits. Add each team with
+  `python3 <workspace>/.ai/workspace.py team add <team>`, which records it in `teams` and creates its file, then run `python3 <workspace>/.ai/workspace.py local --team <team>` for the user and `check`. Git history keeps removed values; say so, and rewrite history only if the user asks.
 - **Clone a teammate's workspace.** Ask for the workspace repository URL, a local path, and the user's team, then run
   `python3 tool/starter.py workspace clone --path <path> --url <url> --team <team>` from this starter's root. For a workspace that is already there, for example after a pull
   that added a repository, omit `--url`; `--name <repo>` limits it to some repositories. Report `cloned`, `present`, `skipped`, and `failed` with their reasons, and warnings.

@@ -6,7 +6,8 @@ description: List an existing repository that this starter did not create in a w
 # Adopt a repository
 
 Adopting is workspace work: it lists the repository in `workspace.json` and the workspace table. Installing the harness is a separate step
-that `adopt --install` runs first; on its own it is `starter-install-harness`.
+that `adopt --install` runs first; on its own it is `starter-install-harness`. Teammates without this starter list a repository with
+`python3 .ai/workspace.py register` in the workspace, which runs the same code.
 
 ## 1. Locate
 

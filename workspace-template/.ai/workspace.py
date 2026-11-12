@@ -6,6 +6,10 @@
     python3 .ai/workspace.py local --team TEAM
     python3 .ai/workspace.py check [--access]
     python3 .ai/workspace.py skills sync
+    python3 .ai/workspace.py register --path REL [--name NAME] [--role TEXT] [--remote URL]
+    python3 .ai/workspace.py unregister --name NAME
+    python3 .ai/workspace.py sync
+    python3 .ai/workspace.py team add NAME
 
 `clone` clones every repository that workspace.json lists and that is not here yet, from its `remote`, into its `path`,
 and connects the pre-commit verify hook in the ones that have the ai-starter harness, because a clone does not carry
@@ -28,6 +32,14 @@ listed repositories not cloned yet, and skills without a valid SKILL.md or a Cla
 `teams` without its rules file in .ai/teams/<team>.md, and a file there for no listed team. `--access` also asks each
 remote whether the user can read it. `skills sync` links every skill in .agents/skills into .claude/skills, where Claude Code
 looks for them; it never deletes or overwrites.
+
+`register` lists a git repository that is already inside the workspace in workspace.json and in the repository table of
+AGENTS.md; no file in the repository is touched. Without --remote it records the repository's origin, with any credentials
+removed from the URL. `unregister` removes an entry from both; the folder stays as it is. `sync` rewrites the table from
+workspace.json after its roles or remotes were edited by hand. The Harness column is read from each repository's .ai/harness.json.
+Installing the harness in a repository needs ai-starter (`adopt --install` or `harness install`).
+
+`team add` adds a team to `teams` in workspace.json and creates its rules file, .ai/teams/<name>.md, unless one is there already.
 
 The workspace is the folder above this file. Output is JSON; exit code 1 on an error.
 Python 3.10+, standard library only. ai-starter's `workspace clone` runs this same code, so change it only here.
@@ -55,6 +67,10 @@ LOCAL_EXAMPLE = ".ai/CLAUDE.local.example.md"
 PERSONAL_FILES = [LOCAL_FILE, ".claude/settings.local.json"]
 TEAM_LINE = re.compile(r"^Team:[ \t]*(.*?)[ \t]*$", re.MULTILINE)
 TEAM_NAME = re.compile(r"[a-z][a-z0-9-]{0,31}\Z")
+REPO_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
+# The generated repository table in AGENTS.md sits between these markers.
+REPOS_START = "<!-- workspace:repos:start -->"
+REPOS_END = "<!-- workspace:repos:end -->"
 # One file of rules for each team in workspace.json `teams`, read by members of that team.
 TEAMS_DIR = ".ai/teams"
 # The only copy of each skill; .claude/skills holds links to it, as in repositories with the harness.
@@ -390,6 +406,182 @@ def skill_problems(workspace: Path) -> list[str]:
     return problems
 
 
+def repo_kind(workspace: Path, repo: dict) -> str:
+    return "managed" if (workspace / repo["path"] / HARNESS_RECORD).is_file() else "registered"
+
+
+def entry_at(manifest: dict | None, path: str) -> dict | None:
+    return next((r for r in (manifest or {}).get("repos", []) if r["path"] == path), None)
+
+
+def check_new_entry(manifest: dict | None, name: str, path: str) -> None:
+    if not REPO_NAME.match(name):
+        raise WorkspaceError(f"Invalid repository name {name!r}: letters, digits, '.', '_', '-', up to 64 characters.")
+    for repo in (manifest or {}).get("repos", []):
+        if repo["name"] == name or repo["path"] == path:
+            raise WorkspaceError(f"The workspace already registers {repo['name']!r} at {repo['path']!r}.")
+
+
+def remote_warnings(names: list[str]) -> list[str]:
+    if not names:
+        return []
+    return [f"No remote is recorded for {names}; a teammate who clones the workspace cannot get them. "
+            "Push them, set \"remote\" in workspace.json, and run sync."]
+
+
+def origin_url(repo: Path) -> tuple[str, list[str]]:
+    """The repository's origin remote with any credentials removed, for workspace.json; empty when it has none."""
+    try:
+        url = _git(repo, "remote", "get-url", "origin").strip()
+    except WorkspaceError:
+        return "", []
+    clean, stripped = split_credentials(url)
+    warnings = [f"The origin URL of {repo} contains credentials; workspace.json records it without them. "
+                "Consider moving them to a credential helper."] if stripped else []
+    return clean, warnings
+
+
+def _cell(value: str) -> str:
+    return value.replace("|", "\\|").replace("\n", " ").strip() or "-"
+
+
+def render_repos(workspace: Path, repos: list[dict]) -> str:
+    if not repos:
+        return "No repositories yet."
+    rows = ["| Repository | Path | Role | Harness | Remote |", "| --- | --- | --- | --- | --- |"]
+    for repo in repos:
+        rows.append(f"| {_cell(repo['name'])} | `{repo['path']}/` | {_cell(repo.get('role', ''))} | {repo_kind(workspace, repo)} | {_cell(repo.get('remote', ''))} |")
+    return "\n".join(rows)
+
+
+def agents_with_table(workspace: Path, repos: list[dict]) -> tuple[str | None, str | None]:
+    """The workspace AGENTS.md with its generated table rewritten, or a warning when the markers are gone."""
+    path = workspace / "AGENTS.md"
+    text = path.read_text(encoding="utf-8") if path.is_file() else ""
+    start, end = text.find(REPOS_START), text.find(REPOS_END)
+    if start == -1 or end < start:
+        return None, f"{path}: repository markers are missing; the table was not updated. Restore {REPOS_START} and {REPOS_END}."
+    return text[:start] + f"{REPOS_START}\n{render_repos(workspace, repos)}\n" + text[end:], None
+
+
+def with_repo(manifest: dict, entry: dict) -> dict:
+    """A copy of the manifest with the entry added, or replacing the one at the same path. Older `kind` fields are dropped."""
+    repos = [{k: v for k, v in r.items() if k != "kind"} for r in manifest["repos"]]
+    index = next((i for i, r in enumerate(repos) if r["path"] == entry["path"]), None)
+    if index is None:
+        repos.append(entry)
+    else:
+        repos[index] = entry
+    return {**manifest, "repos": repos}
+
+
+def without_repo(manifest: dict, name: str) -> tuple[dict, dict]:
+    """A copy of the manifest without the named entry, and that entry."""
+    entry = next((r for r in manifest["repos"] if r["name"] == name), None)
+    if entry is None:
+        raise WorkspaceError(f"The workspace has no repository named {name!r}; registered: {[r['name'] for r in manifest['repos']]}.")
+    repos = [{k: v for k, v in r.items() if k != "kind"} for r in manifest["repos"] if r is not entry]
+    return {**manifest, "repos": repos}, entry
+
+
+def manifest_text(manifest: dict) -> str:
+    return json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
+
+
+def _write_all(files: dict[Path, str]) -> None:
+    """Writes every file to a temporary file first and moves them into place only when all are written."""
+    temps = {path: path.with_name(f".{path.name}.{uuid.uuid4().hex[:12]}.starter-tmp") for path in files}
+    try:
+        for path, text in files.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temps[path].write_text(text, encoding="utf-8")
+        for path in files:
+            os.replace(temps[path], path)
+    finally:
+        for temp in temps.values():
+            if temp.exists():
+                temp.unlink()
+
+
+def save_repos(workspace: Path, manifest: dict) -> list[str]:
+    """Writes workspace.json and the AGENTS.md table together; missing table markers only cost a warning."""
+    agents, warning = agents_with_table(workspace, manifest["repos"])
+    files = {workspace / WORKSPACE_FILE: manifest_text(manifest)}
+    if agents is not None:
+        files[workspace / "AGENTS.md"] = agents
+    _write_all(files)
+    return [warning] if warning else []
+
+
+def plan_register(workspace: Path, path: str, name: str = "", role: str = "", remote: str = "") -> tuple[dict, list[str]]:
+    """The entry for a git repository already inside the workspace, and warnings. Writes nothing."""
+    relative = _clean_relative(path)
+    if relative is None:
+        raise WorkspaceError(f"--path must be a folder inside the workspace, relative to it: {path!r}")
+    if has_credentials(remote):
+        raise WorkspaceError("--remote contains credentials (a token or password in the URL). Give the URL without them; "
+                             "workspace.json is committed and shared.")
+    name = name or relative.rsplit("/", 1)[-1]
+    check_new_entry(load_manifest(workspace), name, relative)
+    repo = workspace / relative
+    if repo.is_symlink() or not (repo / ".git").exists():
+        raise WorkspaceError(f"{repo} is not a git repository. Clone or create it there first.")
+    warnings = []
+    if not remote:
+        remote, warnings = origin_url(repo)
+    return {"name": name, "path": relative, "role": role, "remote": remote}, warnings + remote_warnings([] if remote else [name])
+
+
+def register(workspace: Path, path: str, name: str = "", role: str = "", remote: str = "") -> dict:
+    entry, warnings = plan_register(workspace, path, name, role, remote)
+    warnings += save_repos(workspace, with_repo(load_manifest(workspace), entry))
+    return {"ok": True, "workspace": str(workspace), "registered": entry, "kind": repo_kind(workspace, entry), "warnings": warnings,
+            "note": "No file in the repository was touched. Nothing was committed."}
+
+
+def unregister(workspace: Path, name: str) -> dict:
+    manifest, entry = without_repo(load_manifest(workspace), name)
+    warnings = save_repos(workspace, manifest)
+    return {"ok": True, "workspace": str(workspace), "removed": entry, "repository": str(workspace / entry["path"]), "warnings": warnings,
+            "note": "Only the workspace entry was removed; the repository folder is untouched. Nothing was committed."}
+
+
+def sync(workspace: Path) -> dict:
+    manifest = load_manifest(workspace)
+    agents, warning = agents_with_table(workspace, manifest["repos"])
+    if agents is None:
+        raise WorkspaceError(warning)
+    _write_all({workspace / "AGENTS.md": agents})
+    return {"ok": True, "workspace": str(workspace), "repos": [r["name"] for r in manifest["repos"]],
+            "warnings": remote_warnings([r["name"] for r in manifest["repos"] if not r.get("remote")])}
+
+
+def team_rules_text(team: str) -> str:
+    return (f"# {team} team\n\nRules for members of the {team} team in this workspace. Rules for every team are in `AGENTS.md`; "
+            "a repository's own `AGENTS.md` wins inside it.\n\nNo rules of its own yet. Add them here, one line each.\n")
+
+
+def add_team(workspace: Path, team: str) -> dict:
+    """Adds the team to workspace.json and creates its rules file; an existing rules file is kept as it is."""
+    if not TEAM_NAME.match(team):
+        raise WorkspaceError(f"Invalid team {team!r}: lowercase letters, digits, and '-', up to 32 characters.")
+    manifest = load_manifest(workspace)
+    teams = manifest.get("teams", [])
+    if team in teams:
+        raise WorkspaceError(f"workspace.json already lists team {team!r}: {teams}.")
+    rules = workspace / TEAMS_DIR / f"{team}.md"
+    if rules.is_symlink() or (rules.exists() and not rules.is_file()):
+        raise WorkspaceError(f"{rules} exists and is not a file; move it first.")
+    files = {workspace / WORKSPACE_FILE: manifest_text({**manifest, "teams": [*teams, team]})}
+    created = not rules.exists()
+    if created:
+        files[rules] = team_rules_text(team)
+    _write_all(files)
+    return {"ok": True, "workspace": str(workspace), "team": team, "teams": [*teams, team], "rules": f"{TEAMS_DIR}/{team}.md",
+            "rulesCreated": created, "warnings": [],
+            "note": "Write the team's rules in its file. Commit workspace.json and the file together, only when the user asks."}
+
+
 def team_warnings(workspace: Path, teams: list[str]) -> list[str]:
     """A listed team without its rules file, and a rules file for no listed team. Neither blocks work."""
     folder = workspace / TEAMS_DIR
@@ -473,6 +665,16 @@ def main(argv: list[str]) -> int:
     check_parser = sub.add_parser("check", help="report what is still to do: team, tools, repositories, skills")
     check_parser.add_argument("--access", action="store_true", help="also check read access to every remote")
     sub.add_parser("skills").add_subparsers(dest="action", required=True).add_parser("sync", help="link .agents/skills into .claude/skills")
+    register_parser = sub.add_parser("register", help="list a git repository already inside the workspace")
+    register_parser.add_argument("--path", required=True, help="the repository folder, relative to the workspace")
+    register_parser.add_argument("--name", default="", help="defaults to the folder name")
+    register_parser.add_argument("--role", default="", help="what the repository is, for the table")
+    register_parser.add_argument("--remote", default="", help="defaults to the repository's origin")
+    unregister_parser = sub.add_parser("unregister", help="remove a repository from the list; its folder stays")
+    unregister_parser.add_argument("--name", required=True)
+    sub.add_parser("sync", help="rewrite the AGENTS.md repository table from workspace.json")
+    team_add = sub.add_parser("team").add_subparsers(dest="action", required=True).add_parser("add", help="add a team and its rules file")
+    team_add.add_argument("name")
     args = parser.parse_args(argv)
     try:
         if args.command == "clone":
@@ -483,6 +685,14 @@ def main(argv: list[str]) -> int:
             report = {"ok": True, **set_local_team(WORKSPACE, args.team)}
         elif args.command == "check":
             report = check(WORKSPACE, args.access)
+        elif args.command == "register":
+            report = register(WORKSPACE, args.path, args.name, args.role, args.remote)
+        elif args.command == "unregister":
+            report = unregister(WORKSPACE, args.name)
+        elif args.command == "sync":
+            report = sync(WORKSPACE)
+        elif args.command == "team":
+            report = add_team(WORKSPACE, args.name)
         else:
             report = sync_skills(WORKSPACE)
     except WorkspaceError as error:

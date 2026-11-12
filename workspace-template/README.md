@@ -37,8 +37,11 @@ Steps that only this workspace needs, such as connectors, accounts, or whom to a
 
 - `python3 .ai/workspace.py update` brings everything up to date: it pulls this repository, clones repositories added since, and
   fast-forwards the others. It skips a repository with uncommitted changes or one on a branch without an upstream, and never discards anything.
+- `python3 .ai/workspace.py register --path <folder> --role "<role>"` lists a repository you cloned inside this folder, and
+  `unregister --name <name>` takes one off the list without touching its folder. Commit `workspace.json` and `AGENTS.md` afterwards.
 - `CLAUDE.local.md` is yours: your team and your own preferences for agents. Git ignores it. Rules for everyone belong in `AGENTS.md`.
 - `.ai/teams/<team>.md` holds the rules for one team, one file for each team in `workspace.json`. Read the one for your team.
+  `python3 .ai/workspace.py team add <name>` adds a team with its file. To change shared rules, ask the agent here; the `workspace-rules` skill walks through it.
 - Workspace skills live in `.agents/skills/<name>/SKILL.md`. To add one, write that file, run `python3 .ai/workspace.py skills sync`
   so that Claude Code sees it (`.claude/skills/<name>`), check it with `python3 .ai/workspace.py check`, and commit both.
   They load in sessions opened at this folder, not in sessions opened inside a repository. Names starting with `workspace-` are reserved for skills that ship with the workspace.

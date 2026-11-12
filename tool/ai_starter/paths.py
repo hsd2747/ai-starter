@@ -31,7 +31,8 @@ WORKSPACE_TOOL = ".ai/workspace.py"
 def workspace_tool() -> ModuleType:
     """The workspace's own command module, workspace-template/.ai/workspace.py, which a workspace runs without this starter.
 
-    The starter runs the same code for `workspace clone`, so the two never drift. Loaded from WORKSPACE_TEMPLATE at call time.
+    The starter runs the same code for `workspace clone` and for registering, unregistering, and the repository table,
+    so the two never drift. Loaded from WORKSPACE_TEMPLATE at call time.
     """
     source = WORKSPACE_TEMPLATE / WORKSPACE_TOOL
     name = f"ai_starter_workspace_tool_{abs(hash(str(source)))}"

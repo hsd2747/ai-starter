@@ -208,7 +208,7 @@ class CloneTest(WorkspaceCase):
 
         code, report = self.tool(mate, "check", "--access")
         self.assertEqual(code, 0, report)
-        self.assertEqual(report["skills"], ["workspace-onboard"])
+        self.assertEqual(report["skills"], ["workspace-onboard", "workspace-repos", "workspace-rules"])
         self.assertEqual(report["access"], {"be": "ok"})
         self.assertEqual(report["missing"], ["legacy"])
 

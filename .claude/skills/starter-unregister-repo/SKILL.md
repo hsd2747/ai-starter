@@ -5,6 +5,8 @@ description: Take a repository out of a workspace by running tool/starter.py unr
 
 # Unregister a repository
 
+Teammates without this starter do the same with `python3 .ai/workspace.py unregister --name <name>` in the workspace, which runs the same code.
+
 ## 1. Locate
 
 - Choose the workspace with [choose-workspace.md](../starter-workspace/references/choose-workspace.md), then the repository by the name its `workspace list` entry shows.

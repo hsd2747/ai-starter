@@ -35,6 +35,8 @@ Workspace: which repositories a workspace lists, their roles, and the workspace 
   sync  --workspace PATH
         Rewrite the repository table in the workspace AGENTS.md from workspace.json, after editing roles or remotes there.
         The Harness column is read from each repository's .ai/harness.json. Repositories without a remote are warned about.
+        adopt (without --install), unregister, and sync run the workspace's own .ai/workspace.py code, which teammates can run
+        without this starter as `register`, `unregister`, and `sync`.
   workspace clone --path PATH [--url URL] [--name NAME ...] [--team TEAM]
         Reproduce a shared workspace: with --url, clone the workspace repository into PATH (missing or empty) first; then clone
         every listed repository, or only the named ones, that is not there yet from its remote in workspace.json, and connect
@@ -74,10 +76,7 @@ Every write goes to a temporary file first and is moved into place only when all
 
 
 def _remote_warnings(names: list[str]) -> list[str]:
-    if not names:
-        return []
-    return [f"No remote is recorded for {names}; a teammate who clones the workspace cannot get them. "
-            "Push them, set \"remote\" in workspace.json, and run sync."]
+    return paths.workspace_tool().remote_warnings(names)
 
 
 def cmd_new(args: argparse.Namespace) -> dict:
