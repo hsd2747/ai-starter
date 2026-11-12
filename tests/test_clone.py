@@ -140,6 +140,75 @@ class CloneTest(WorkspaceCase):
         self.assertEqual(run("adopt", "--workspace", str(self.ws), "--path", "admin")[0], 0)
         self.assertEqual(self.manifest()["repos"][1]["remote"], "git@example.com:team/admin.git")
 
+    def tool(self, workspace: Path, *args: str) -> tuple[int, dict]:
+        process = subprocess.run([sys.executable, "-I", str(workspace / ".ai/workspace.py"), *args], capture_output=True, text=True)
+        return process.returncode, json.loads(process.stdout)
+
+    def test_a_repository_out_of_reach_does_not_stop_the_others(self):
+        self.share()
+        manifest = self.manifest()
+        manifest["repos"].insert(0, {"name": "secret-repo", "path": "secret-repo", "remote": str(self.base / "remotes" / "no-access.git")})
+        (self.ws / "workspace.json").write_text(json.dumps(manifest), encoding="utf-8")
+        commit_all(self.ws)
+        mate = self.base / "mate"
+        git(self.base, "clone", "-q", str(self.bare(self.ws, "product2")), str(mate))
+        code, report = self.tool(mate, "clone")
+        self.assertEqual(code, 0, report)
+        self.assertEqual([c["name"] for c in report["cloned"]], ["be"])
+        self.assertEqual([f["name"] for f in report["failed"]], ["secret-repo"])
+        self.assertFalse((mate / "secret-repo").exists())
+        self.assertEqual(leftovers(mate), [])
+        self.assertTrue(any("could not be cloned" in w for w in report["warnings"]), report["warnings"])
+
+    def test_local_settings_stay_personal_and_keep_what_the_user_wrote(self):
+        url = self.share()
+        manifest = self.manifest()
+        manifest["teams"] = ["dev", "pm", "pd"]
+        (self.ws / "workspace.json").write_text(json.dumps(manifest), encoding="utf-8")
+        self.assertEqual(run("sync", "--workspace", str(self.ws))[0], 0, "teams must pass the workspace schema")
+        commit_all(self.ws)
+        url = self.bare(self.ws, "product-teams")
+
+        mate = self.base / "mate"
+        code, report = run("workspace", "clone", "--path", str(mate), "--url", str(url), "--team", "pm")
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report["local"]["team"], "pm")
+        local = mate / "CLAUDE.local.md"
+        self.assertIn("Team: pm", local.read_text(encoding="utf-8"))
+        self.assertIn("CLAUDE.local.md", git(mate, "check-ignore", "CLAUDE.local.md"))
+        self.assertEqual(self.tool(mate, "check")[1]["problems"], [])
+
+        local.write_text(local.read_text(encoding="utf-8") + "- Answer in Korean.\n", encoding="utf-8")
+        code, report = self.tool(mate, "local", "--team", "pd")
+        self.assertEqual((code, report["created"]), (0, False), report)
+        text = local.read_text(encoding="utf-8")
+        self.assertIn("Team: pd", text)
+        self.assertNotIn("Team: pm", text)
+        self.assertIn("- Answer in Korean.", text)
+
+        before = text
+        code, report = self.tool(mate, "local", "--team", "sales")
+        self.assertEqual(code, 1)
+        self.assertIn("Unknown team", report["error"])
+        self.assertEqual(local.read_text(encoding="utf-8"), before)
+
+        git(mate, "add", "-f", "CLAUDE.local.md")
+        code, report = self.tool(mate, "check")
+        self.assertEqual(code, 1)
+        self.assertIn("tracked by git", report["problems"][0])
+
+    def test_check_asks_for_a_team_until_one_is_recorded(self):
+        url = self.share()
+        mate = self.base / "mate"
+        code, report = run("workspace", "clone", "--path", str(mate), "--url", str(url))
+        self.assertEqual(code, 0, report)
+        self.assertTrue(any("No team" in w for w in report["warnings"]), report["warnings"])
+        code, report = self.tool(mate, "check")
+        self.assertEqual(code, 1)
+        self.assertIn("No team", report["problems"][0])
+        self.assertEqual(self.tool(mate, "local", "--team", "anything")[0], 0, "without a teams list any valid name is accepted")
+        self.assertEqual(self.tool(mate, "check")[0], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

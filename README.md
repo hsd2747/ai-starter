@@ -59,8 +59,19 @@ A teammate does not need this starter for that. Every workspace carries the same
 
 ```bash
 git clone git@example.com:team/my-product-workspace.git ~/work/my-product && cd ~/work/my-product
-python3 .ai/workspace.py clone [--name be]
+python3 .ai/workspace.py clone --team pm [--name be]   # clone what is missing, record the team
+python3 .ai/workspace.py check                         # personal files tracked by git, or no team recorded
 ```
+
+A repository the person cannot access is reported under `failed` and the others are still cloned, so access can be granted per repository
+on the remote. Team members who are not developers can use the same workspace.
+
+### Teams and personal settings
+
+`workspace.json` may list `teams` (for example `["dev", "pm", "pd"]`). Each person's `CLAUDE.local.md` at the workspace root, made by
+`python3 .ai/workspace.py local --team <team>` from `.ai/CLAUDE.local.example.md`, names their team and holds their own preferences.
+Git ignores it and Claude Code loads it in every session there. The workspace `AGENTS.md` says that a rule marked with teams, such as "(dev)",
+applies only to them, and that one person's values (names, account IDs) never go into shared files but are looked up at run time or kept in `CLAUDE.local.md`.
 
 The starter's `workspace clone` runs that file from `workspace-template/`, and adds the root clone from `--url`, the full schema check,
 warnings about starter commits it lacks, and the saved workspace list. Older workspaces get the file with `upgrade --root-only`.
@@ -162,7 +173,8 @@ my-product/                  # its own git repository; tracks only the files bel
 ├── .gitignore               # ignores every repository folder
 ├── .claude/settings.json    # guard hook for sessions opened at the workspace root
 ├── .ai/guard/               # copy of the guard the hook runs
-├── .ai/workspace.py         # `clone`: clones the listed repositories, no starter needed
+├── .ai/workspace.py         # `clone`, `local`, `check`: no starter needed
+├── .ai/CLAUDE.local.example.md  # template of each person's CLAUDE.local.md (ignored), which names their team
 ├── be/                      # managed: has the harness
 └── admin/                   # registered: role only
 ```

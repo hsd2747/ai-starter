@@ -38,9 +38,14 @@ The workspace repository works like a manifest: teammates clone it and then ever
 - **Share.** Show which entries in `workspace.json` have no `remote` (`sync` warns about them). Ask for each URL, never one with a token or password in it,
   edit the entries, and run `sync`. Adding a remote to the workspace repository and pushing it are outward-facing: do them only when the user asks,
   after showing the remote URL and the files that would be pushed (`git -C <workspace> ls-files`).
-- **Clone a teammate's workspace.** Ask for the workspace repository URL and a local path, then run
-  `python3 tool/starter.py workspace clone --path <path> --url <url>` from this starter's root. For a workspace that is already there, for example after a pull
-  that added a repository, omit `--url`; `--name <repo>` limits it to some repositories. Report `cloned`, `present`, `skipped` with their reasons, and warnings.
+- **Separate personal values before sharing.** Read the tracked files (`git -C <workspace> ls-files`, skipping `.ai/guard/`) and list what belongs to one person:
+  names, account IDs, personal paths, and preferences worded as one user's standing request. Ask whether each is personal or a team rule; mask the values in the
+  list you show. A personal value that a tool can look up at run time (for example the current Jira user) becomes a lookup; the rest moves to that person's
+  `CLAUDE.local.md`. A team rule that only some teams follow gets a team mark such as "(dev)". Record the team names in `workspace.json` as `teams`,
+  then run `python3 <workspace>/.ai/workspace.py local --team <team>` for the user and `check`. Git history keeps removed values; say so, and rewrite history only if the user asks.
+- **Clone a teammate's workspace.** Ask for the workspace repository URL, a local path, and the user's team, then run
+  `python3 tool/starter.py workspace clone --path <path> --url <url> --team <team>` from this starter's root. For a workspace that is already there, for example after a pull
+  that added a repository, omit `--url`; `--name <repo>` limits it to some repositories. Report `cloned`, `present`, `skipped`, and `failed` with their reasons, and warnings.
   A clone that fails on authentication means the user's git cannot reach that remote yet; suggest they check their access with `! git ls-remote <remote>`, never a URL with a token.
 - Teammates do not need this starter: a workspace carries `.ai/workspace.py`, so `git clone <url> <folder>` and `python3 .ai/workspace.py clone` inside it do the same.
   A workspace made before that file existed gets it with `upgrade --workspace <path> --root-only` (`starter-upgrade`); commit and push it before teammates rely on it.

@@ -49,7 +49,7 @@ def _clone_root(url: str, workspace: Path) -> None:
         raise
 
 
-def clone_workspace(raw_path: str, url: str, names: list[str]) -> dict:
+def clone_workspace(raw_path: str, url: str, names: list[str], team: str = "") -> dict:
     workspace = resolve_workspace(raw_path)
     if url:
         _clone_root(url, workspace)
@@ -58,7 +58,7 @@ def clone_workspace(raw_path: str, url: str, names: list[str]) -> dict:
         raise StarterError(f"{workspace} has no {WORKSPACE_FILE}. Pass --url with the workspace repository to clone it first.")
     tool = paths.workspace_tool()
     try:
-        report = tool.clone(workspace, names)
+        report = tool.clone(workspace, names, team)
     except tool.WorkspaceError as error:
         raise StarterError(str(error)) from None
 

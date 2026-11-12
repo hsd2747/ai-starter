@@ -8,7 +8,13 @@
   "properties": {
     "schemaVersion": { "const": 1 },
     "starter": { "$ref": "#/$defs/starter" },
-    "repos": { "type": "array", "items": { "$ref": "#/$defs/repo" } }
+    "repos": { "type": "array", "items": { "$ref": "#/$defs/repo" } },
+    "teams": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$" },
+      "description": "Team names that CLAUDE.local.md may name and rules may be marked with, such as dev, pm, pd. Optional."
+    }
   },
   "$defs": {
     "starter": {

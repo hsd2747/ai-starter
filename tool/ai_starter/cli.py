@@ -35,10 +35,12 @@ Workspace: which repositories a workspace lists, their roles, and the workspace 
   sync  --workspace PATH
         Rewrite the repository table in the workspace AGENTS.md from workspace.json, after editing roles or remotes there.
         The Harness column is read from each repository's .ai/harness.json. Repositories without a remote are warned about.
-  workspace clone --path PATH [--url URL] [--name NAME ...]
+  workspace clone --path PATH [--url URL] [--name NAME ...] [--team TEAM]
         Reproduce a shared workspace: with --url, clone the workspace repository into PATH (missing or empty) first; then clone
         every listed repository, or only the named ones, that is not there yet from its remote in workspace.json, and connect
-        the pre-commit hook in those with the harness. Repositories already there are left alone, so run it again after a pull.
+        the pre-commit hook in those with the harness. Repositories already there are left alone, so run it again after a pull;
+        one that cannot be cloned is listed under failed and the rest go on. --team records the user's team in CLAUDE.local.md.
+        It runs the workspace's own .ai/workspace.py code, which teammates can run without this starter.
   workspace list | add --path PATH | remove --path PATH
         The saved workspace list (~/.claude/ai-starter/workspaces.json, or $AI_STARTER_REGISTRY), most recent first.
         new, adopt, unregister, sync, upgrade, and clone record their workspace there. remove only forgets the entry; it never touches the folder.
@@ -233,14 +235,14 @@ def cmd_harness(args: argparse.Namespace) -> dict:
 
 
 def cmd_workspace(args: argparse.Namespace) -> dict:
-    if (args.url or args.name) and args.action != "clone":
-        raise StarterError("--url and --name apply only to `workspace clone`.")
+    if (args.url or args.name or args.team) and args.action != "clone":
+        raise StarterError("--url, --name, and --team apply only to `workspace clone`.")
     if args.action == "list":
         return {"ok": True, "registry": str(registry_path()), "workspaces": [describe_workspace(w) for w in load_registry()["workspaces"]]}
     if not args.path:
         raise StarterError(f"workspace {args.action} needs --path.")
     if args.action == "clone":
-        return clone_workspace(args.path, args.url, args.name)
+        return clone_workspace(args.path, args.url, args.name, args.team)
     if args.action == "add":
         workspace = resolve_workspace(args.path)
         warnings = remember_workspace(workspace)
@@ -291,6 +293,7 @@ def _parser() -> argparse.ArgumentParser:
     workspace.add_argument("--path", default="")
     workspace.add_argument("--url", default="")
     workspace.add_argument("--name", action="append", default=[])
+    workspace.add_argument("--team", default="")
     return parser
 
 

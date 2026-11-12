@@ -21,12 +21,26 @@ This folder is a git repository of its own; the repositories it lists are cloned
 
 ```bash
 git clone <this workspace repository> <folder> && cd <folder>
-python3 .ai/workspace.py clone             # every listed repository that is not here yet
-python3 .ai/workspace.py clone --name be   # only the named ones
+python3 .ai/workspace.py clone --team <team>   # every listed repository that is not here yet, and your team in CLAUDE.local.md
+python3 .ai/workspace.py clone --name be       # only the named ones
+python3 .ai/workspace.py check                 # personal files tracked by git, or no team recorded
 ```
 
 It never touches a repository that is already here, skips entries without a remote, and connects the pre-commit verify hook in
-repositories with the harness. Run it again after a pull that lists new repositories. Each repository's own setup still follows its README.
+repositories with the harness. A repository you cannot access is listed under `failed` and the rest go on; ask for access and run it again.
+Run it again after a pull that lists new repositories. Each repository's own setup still follows its README.
+
+## Teams and personal settings
+
+`CLAUDE.local.md` at this root belongs to one person: git ignores it, `python3 .ai/workspace.py local --team <team>` makes it from
+`.ai/CLAUDE.local.example.md`, and Claude Code loads it in every session here. Other agents read it before their first task in this folder.
+Its `Team:` line names the user's team, one of the `teams` in `workspace.json`.
+
+- A rule or section marked with teams, such as "(dev)", applies only to members of those teams; an unmarked rule applies to everyone.
+- With no team recorded, ask for it before a team-marked task, and suggest `python3 .ai/workspace.py local --team <team>`.
+- Never write one person's values into a shared file: names, account IDs, personal paths, or anything from `CLAUDE.local.md`.
+  Look them up at run time instead, for example the current user from the issue tracker, or keep them in `CLAUDE.local.md`.
+- Access to each repository is granted on its remote. Do not work around a repository the user cannot clone or push to.
 
 ## Contracts between repositories
 
