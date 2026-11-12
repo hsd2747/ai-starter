@@ -18,8 +18,9 @@ from .registry import remember_workspace
 from .workspace import load_workspace
 
 
-def _clone_root(url: str, workspace: Path) -> None:
-    """Clones the workspace repository into an empty or missing folder, and keeps it only if it holds a valid workspace.json.
+def _clone_root(url: str, workspace: Path, names: list[str], team: str) -> None:
+    """Clones the workspace repository into an empty or missing folder, and keeps it only if it holds a valid workspace.json
+    that the requested names and team pass, so that a refused request leaves the folder as it was.
 
     The clone is made inside the workspace folder and its entries are then moved up, so nothing is written outside it.
     """
@@ -38,6 +39,10 @@ def _clone_root(url: str, workspace: Path) -> None:
             raise StarterError(str(error)) from None
         if load_workspace(temp) is None:
             raise StarterError(f"{url} has no {WORKSPACE_FILE} in its default branch, so it is not a workspace repository.")
+        try:
+            tool.plan_clone(temp, names, team)
+        except tool.WorkspaceError as error:
+            raise StarterError(f"{error} Nothing was kept in {workspace}.") from None
         for entry in sorted(temp.iterdir()):
             entry.rename(workspace / entry.name)
         temp.rmdir()
@@ -52,7 +57,7 @@ def _clone_root(url: str, workspace: Path) -> None:
 def clone_workspace(raw_path: str, url: str, names: list[str], team: str = "") -> dict:
     workspace = resolve_workspace(raw_path)
     if url:
-        _clone_root(url, workspace)
+        _clone_root(url, workspace, names, team)
     manifest = load_workspace(workspace)
     if manifest is None:
         raise StarterError(f"{workspace} has no {WORKSPACE_FILE}. Pass --url with the workspace repository to clone it first.")
@@ -67,7 +72,13 @@ def clone_workspace(raw_path: str, url: str, names: list[str], team: str = "") -
         warnings.append("The workspace was made from a starter commit this starter does not have; pull the starter before running upgrade.")
     for entry in report["cloned"]:
         if entry["harness"]:
-            record = load_manifest(workspace / entry["path"] / HARNESS_RECORD, "harness")
+            try:
+                record = load_manifest(workspace / entry["path"] / HARNESS_RECORD, "harness")
+            except StarterError as error:
+                # The repository is cloned and usable; only this starter cannot read its record, so the report must survive.
+                warnings.append(f"{entry['name']}: this starter cannot read its {HARNESS_RECORD}, often because a newer starter made it; "
+                                f"pull the starter before upgrading it. {error}")
+                continue
             if not known_commit(record["starter"]["commit"]):
                 warnings.append(f"{entry['name']} was made from a starter commit this starter does not have; pull the starter before upgrading it.")
     report["warnings"] += warnings + remember_workspace(workspace)

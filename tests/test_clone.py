@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 import unittest
@@ -317,6 +319,69 @@ class CloneTest(WorkspaceCase):
         (teams / "pm.md").write_text("# pm\n", encoding="utf-8")
         (teams / "qa.md").unlink()
         self.assertFalse(any(".ai/teams" in w or "No rules file" in w for w in self.tool(mate, "check")[1]["warnings"]))
+
+    def test_a_remote_that_looks_like_a_git_option_is_never_run(self):
+        url = self.share()
+        mate = self.base / "mate"
+        git(self.base, "clone", "-q", str(url), str(mate))
+        marker = self.base / "ran"
+        manifest = json.loads((mate / "workspace.json").read_text(encoding="utf-8"))
+        manifest["repos"].append({"name": "evil", "path": "evil", "remote": f"--upload-pack=touch {marker}"})
+        (mate / "workspace.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+        code, report = self.tool(mate, "clone", "--name", "evil")
+        self.assertEqual(code, 0, report)
+        self.assertEqual([f["name"] for f in report["failed"]], ["evil"])
+        code, report = self.tool(mate, "check", "--access")
+        self.assertNotEqual(report["access"]["evil"], "ok")
+        self.assertFalse(marker.exists(), "the remote was passed to git as an option")
+        self.assertFalse((mate / "evil").exists())
+        self.assertEqual(leftovers(mate), [])
+
+    def test_a_refused_team_or_name_with_url_leaves_the_folder_as_it_was(self):
+        url = self.share()
+        missing = self.base / "mate" / "product"
+        for args, message in ((["--name", "web"], "no repository named"), (["--team", "Dev"], "Invalid team")):
+            code, report = run("workspace", "clone", "--path", str(missing), "--url", str(url), *args)
+            self.assertEqual(code, 1, report)
+            self.assertIn(message, report["error"])
+            self.assertFalse(missing.exists(), args)
+
+        empty = self.base / "empty"
+        empty.mkdir()
+        self.assertEqual(run("workspace", "clone", "--path", str(empty), "--url", str(url), "--name", "web")[0], 1)
+        self.assertEqual(list(empty.iterdir()), [])
+        code, report = run("workspace", "clone", "--path", str(empty), "--url", str(url), "--name", "be")
+        self.assertEqual(code, 0, "the corrected command runs in the same folder")
+        self.assertEqual([c["name"] for c in report["cloned"]], ["be"])
+
+    def test_a_harness_record_this_starter_cannot_read_is_only_a_warning(self):
+        url = self.share()
+        be = self.ws / "be"
+        record = json.loads((be / ".ai/harness.json").read_text(encoding="utf-8"))
+        record["fromANewerStarter"] = True
+        (be / ".ai/harness.json").write_text(json.dumps(record), encoding="utf-8")
+        commit_all(be)
+        git(be, "push", "-q", str(self.base / "remotes" / "be.git"), "HEAD")
+
+        mate = self.base / "mate"
+        code, report = run("workspace", "clone", "--path", str(mate), "--url", str(url))
+        self.assertEqual(code, 0, report)
+        self.assertEqual([c["name"] for c in report["cloned"]], ["be"])
+        self.assertTrue(any("cannot read" in w and w.startswith("be:") for w in report["warnings"]), report["warnings"])
+        self.assertIn(str(mate.resolve()), [w["path"] for w in run("workspace", "list")[1]["workspaces"]])
+
+    def test_check_reports_a_folder_git_cannot_read_and_still_checks_the_rest(self):
+        url = self.share()
+        mate = self.base / "mate"
+        self.assertEqual(run("workspace", "clone", "--path", str(mate), "--url", str(url), "--team", "dev")[0], 0)
+        shutil.rmtree(mate / ".git")
+        process = subprocess.run([sys.executable, "-I", str(mate / ".ai/workspace.py"), "check"], capture_output=True, text=True,
+                                 env={**os.environ, "GIT_CEILING_DIRECTORIES": str(self.base)})
+        report = json.loads(process.stdout)
+        self.assertEqual(process.returncode, 1, report)
+        self.assertTrue(any("git cannot read" in p for p in report["problems"]), report)
+        self.assertEqual((report["team"], report["missing"]), ("dev", ["legacy"]), "the rest of the check still ran")
 
 
 if __name__ == "__main__":

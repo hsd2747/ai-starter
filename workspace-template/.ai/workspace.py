@@ -130,10 +130,19 @@ def load_manifest(workspace: Path) -> dict:
         raise WorkspaceError(f"{path} has no repos list.")
     for repo in repos:
         if not (isinstance(repo, dict) and isinstance(repo.get("name"), str) and isinstance(repo.get("path"), str)
-                and isinstance(repo.get("remote", ""), str)):
-            raise WorkspaceError(f"{path} has an invalid repository entry: {repo!r}")
-        if _clean_relative(repo["path"]) != repo["path"]:
-            raise WorkspaceError(f"{path} gives {repo['name']!r} the path {repo['path']!r}; use a folder inside the workspace, relative to it.")
+                and all(isinstance(repo.get(field, ""), str) for field in ("role", "remote"))):
+            raise WorkspaceError(f"{path} has an invalid repository entry: {repo!r}; name, path, role, and remote are strings.")
+        if not REPO_NAME.match(repo["name"]):
+            raise WorkspaceError(f"{path} has an invalid repository name {repo['name']!r}: letters, digits, '.', '_', '-', up to 64 characters.")
+        clean = _clean_relative(repo["path"])
+        if clean != repo["path"]:
+            fix = f"write it as {clean!r}" if clean else "use a folder inside the workspace, relative to it"
+            raise WorkspaceError(f"{path} gives {repo['name']!r} the path {repo['path']!r}; {fix} in {WORKSPACE_FILE}.")
+    for field in ("name", "path"):
+        values = [repo[field] for repo in repos]
+        twice = sorted({v for v in values if values.count(v) > 1})
+        if twice:
+            raise WorkspaceError(f"{path} lists the repository {field} {twice} more than once.")
     teams = data.get("teams", [])
     if not (isinstance(teams, list) and all(isinstance(t, str) and TEAM_NAME.match(t) for t in teams)):
         raise WorkspaceError(f"{path} has an invalid teams list: {teams!r}")
@@ -159,7 +168,8 @@ def _git(cwd: Path, *args: str) -> str:
 def clone_into(url: str, parent: Path) -> Path:
     """Clones into a new temporary folder inside `parent` and returns it; the caller moves it into place. git removes a failed clone."""
     temp = parent / f".clone.{uuid.uuid4().hex[:12]}.starter-tmp"
-    _git(parent, "clone", "-q", url, temp.name)
+    # `--` keeps a URL from workspace.json, a shared file, from being read as a git option such as --upload-pack.
+    _git(parent, "clone", "-q", "--", url, temp.name)
     return temp
 
 
@@ -210,8 +220,12 @@ def _clone_one(workspace: Path, repo: dict) -> None:
         raise
 
 
-def clone(workspace: Path, names: list[str], team: str = "") -> dict:
-    """Clones what is missing. With `team`, the team is checked before any clone and recorded in CLAUDE.local.md after."""
+def plan_clone(workspace: Path, names: list[str], team: str = "") -> tuple[list[dict], list[dict], list[dict]]:
+    """Checks the team, the names, and the target paths, and returns what `clone` would do. Writes nothing.
+
+    ai-starter runs it on a freshly cloned workspace repository before moving that into place, so a bad --team or --name
+    leaves the target folder as it was.
+    """
     manifest = load_manifest(workspace)
     if team:
         _check_team(manifest, team)
@@ -221,7 +235,12 @@ def clone(workspace: Path, names: list[str], team: str = "") -> dict:
         raise WorkspaceError(f"The workspace lists no repository named {unknown}; listed: {[r['name'] for r in repos]}.")
     if names:
         repos = [r for r in repos if r["name"] in names]
-    present, to_clone, skipped = _plan(workspace, repos)
+    return _plan(workspace, repos)
+
+
+def clone(workspace: Path, names: list[str], team: str = "") -> dict:
+    """Clones what is missing. With `team`, the team is checked before any clone and recorded in CLAUDE.local.md after."""
+    present, to_clone, skipped = plan_clone(workspace, names, team)
 
     cloned, failed, warnings = [], [], []
     for repo in to_clone:
@@ -610,7 +629,13 @@ def check(workspace: Path, access: bool = False) -> dict:
     if git_version is None:
         problems.append("git is not installed or not on PATH. On macOS, run `xcode-select --install`.")
     else:
-        tracked = _git(workspace, "ls-files", "--", *PERSONAL_FILES).split()
+        try:
+            tracked = _git(workspace, "ls-files", "--", *PERSONAL_FILES).split()
+        except WorkspaceError as error:
+            # Not a git repository, or one git refuses (safe.directory): one problem, and the rest of the check still runs.
+            tracked = []
+            problems.append(f"git cannot read this folder as the workspace repository, so it cannot be updated or shared: {error}. "
+                            "Clone the workspace repository again, or fix the error git reports.")
         if tracked:
             problems.append(f"Personal files are tracked by git: {tracked}. Untrack them with `git rm --cached <file>`, commit, "
                             "and keep each person's copy local.")
@@ -644,7 +669,7 @@ def check(workspace: Path, access: bool = False) -> dict:
             if not repo.get("remote") or has_credentials(repo["remote"]):
                 continue
             try:
-                _git(workspace, "ls-remote", "--heads", repo["remote"])
+                _git(workspace, "ls-remote", "--heads", "--", repo["remote"])
                 report["access"][repo["name"]] = "ok"
             except WorkspaceError as error:
                 report["access"][repo["name"]] = str(error)

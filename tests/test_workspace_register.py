@@ -108,6 +108,37 @@ class WorkspaceRegisterTest(WorkspaceCase):
         self.assertTrue(any("markers are missing" in w for w in report["warnings"]), report["warnings"])
         self.assertEqual(snapshot(self.ws)["AGENTS.md"], before["AGENTS.md"])
 
+    def test_hand_edited_entries_are_checked_like_the_starter_checks_them(self):
+        good = self.manifest()
+        second = {"name": "web", "path": "web", "role": "Web", "remote": ""}
+        cases = [
+            ({"role": None}, "are strings"),
+            ({"remote": 1}, "are strings"),
+            ({"name": "be api"}, "invalid repository name"),
+            ({"path": "be/"}, "write it as 'be'"),
+            ({"path": "./be"}, "write it as 'be'"),
+            ({"path": "../be"}, "inside the workspace"),
+        ]
+        for change, message in cases:
+            manifest = json.loads(json.dumps(good))
+            manifest["repos"][0].update(change)
+            (self.ws / "workspace.json").write_text(json.dumps(manifest), encoding="utf-8")
+            before = snapshot(self.ws)
+            for args in (["sync"], ["check"], ["unregister", "--name", "be"]):
+                code, report = self.tool(*args)
+                self.assertEqual(code, 1, (change, args))
+                self.assertIn(message, report["error"], (change, args))
+            self.assertEqual(snapshot(self.ws), before, change)
+            self.assertEqual(run("sync", "--workspace", str(self.ws))[0], 1, f"the starter refuses {change} as well")
+
+        for field in ("name", "path"):
+            manifest = json.loads(json.dumps(good))
+            manifest["repos"].append({**second, field: manifest["repos"][0][field]})
+            (self.ws / "workspace.json").write_text(json.dumps(manifest), encoding="utf-8")
+            code, report = self.tool("sync")
+            self.assertEqual(code, 1, field)
+            self.assertIn("more than once", report["error"])
+
     def test_team_add_records_the_team_and_creates_its_rules_file_once(self):
         code, report = self.tool("team", "add", "pm")
         self.assertEqual(code, 0, report)
