@@ -66,6 +66,15 @@ python3 .ai/workspace.py check                         # personal files tracked 
 A repository the person cannot access is reported under `failed` and the others are still cloned, so access can be granted per repository
 on the remote. Team members who are not developers can use the same workspace.
 
+### Onboarding and workspace skills
+
+A workspace ships a `README.md` for people and the `workspace-onboard` skill for its agent sessions: `check` reports what a new member still
+lacks (team, tools, repositories, access with `--access`, skills) and the skill walks through each item, by team. Both have a marked block
+(`workspace:setup`, `workspace:onboarding`) for the workspace's own steps, which upgrades keep.
+
+A team adds its own skills as `.agents/skills/<name>/SKILL.md` in the workspace and links them for Claude Code with
+`python3 .ai/workspace.py skills sync`. They load in sessions opened at the workspace root. Names starting with `workspace-` are reserved for skills the starter ships.
+
 ### Teams and personal settings
 
 `workspace.json` may list `teams` (for example `["dev", "pm", "pd"]`). Each person's `CLAUDE.local.md` at the workspace root, made by
@@ -168,10 +177,12 @@ Onboarding from this session does not load the repository's own hook and permiss
 ```text
 my-product/                  # its own git repository; tracks only the files below
 ├── AGENTS.md                # repository roles (generated table) and contracts between repositories
+├── README.md                # for people: getting started, day-to-day use
 ├── CLAUDE.md                # @AGENTS.md
 ├── workspace.json           # source of the repository list
 ├── .gitignore               # ignores every repository folder
 ├── .claude/settings.json    # guard hook for sessions opened at the workspace root
+├── .agents/skills/          # workspace skills, e.g. workspace-onboard; .claude/skills/ links to them
 ├── .ai/guard/               # copy of the guard the hook runs
 ├── .ai/workspace.py         # `clone`, `local`, `check`: no starter needed
 ├── .ai/CLAUDE.local.example.md  # template of each person's CLAUDE.local.md (ignored), which names their team

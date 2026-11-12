@@ -50,6 +50,15 @@ The workspace repository works like a manifest: teammates clone it and then ever
 - Teammates do not need this starter: a workspace carries `.ai/workspace.py`, so `git clone <url> <folder>` and `python3 .ai/workspace.py clone` inside it do the same.
   A workspace made before that file existed gets it with `upgrade --workspace <path> --root-only` (`starter-upgrade`); commit and push it before teammates rely on it.
 - Each cloned repository still needs its own local setup, such as dependencies and environment files made from their examples; point to its README instead of doing it unasked.
+- **Onboarding steps for this workspace.** Steps only this workspace needs (connectors, accounts, whom to ask for access) go between the `workspace:setup`
+  markers of its `README.md` and the `workspace:onboarding` markers of `.agents/skills/workspace-onboard/SKILL.md`, the same steps in both. Propose them, write after approval.
+
+## Workspace skills
+
+A workspace's own skills live in `<workspace>/.agents/skills/<name>/SKILL.md` and load in sessions opened at the workspace root.
+To add one, agree on its name (never starting with `workspace-`, which the starter reserves) and on a `description` that says when to use it and,
+for a skill one team uses, which team. Write the file, run `python3 <workspace>/.ai/workspace.py skills sync` and `check`, and show both new paths for the commit.
+A rule every session at the root needs belongs in the workspace `AGENTS.md`, not in a skill.
 
 ## Commit
 

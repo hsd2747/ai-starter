@@ -42,6 +42,17 @@ Its `Team:` line names the user's team, one of the `teams` in `workspace.json`.
   Look them up at run time instead, for example the current user from the issue tracker, or keep them in `CLAUDE.local.md`.
 - Access to each repository is granted on its remote. Do not work around a repository the user cannot clone or push to.
 
+## Skills
+
+Workspace skills live in `.agents/skills/<name>/SKILL.md`, the only copy; `.claude/skills/<name>` links to it so that Claude Code finds it.
+They load in sessions opened at this folder, not in sessions opened inside a repository, which have their own skills.
+Other agents read `.agents/skills/<name>/SKILL.md` and follow it when a task matches its description.
+
+- A new member, or a `python3 .ai/workspace.py check` with problems: use `workspace-onboard`.
+- Adding a skill: create `.agents/skills/<name>/SKILL.md` with `name: <name>` and a `description` that says when to use it in the frontmatter,
+  run `python3 .ai/workspace.py skills sync`, then `check`, and commit both paths only when the user asks. A skill for one team says so in its description.
+  Names starting with `workspace-` are reserved for skills that ship with the workspace; their files change only through a starter upgrade.
+
 ## Contracts between repositories
 
 <!-- workspace:contracts:start -->
@@ -56,4 +67,5 @@ For example: `be` owns the HTTP API; its OpenAPI document is the source of truth
 - Changing a contract that a repository owns is at least L2 there. Name every consumer repository and what it must change in the completion report,
   and change consumers in their own repositories, as separate tasks with their own verification.
 - Commits, branches, and pushes happen per repository and only when the user asks.
-- This folder's own git history tracks only this file, `CLAUDE.md`, `workspace.json`, `.gitignore`, and `.claude/`, `.ai/`; repositories are ignored, never submodules.
+- This folder's own git history tracks only this file, `README.md`, `CLAUDE.md`, `workspace.json`, `.gitignore`, and `.claude/`, `.agents/`, `.ai/`;
+  repositories are ignored, never submodules. `README.md` is for people: keep its getting-started steps in step with this file.

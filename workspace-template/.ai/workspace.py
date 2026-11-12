@@ -3,7 +3,8 @@
 
     python3 .ai/workspace.py clone [--team TEAM] [--name NAME ...]
     python3 .ai/workspace.py local --team TEAM
-    python3 .ai/workspace.py check
+    python3 .ai/workspace.py check [--access]
+    python3 .ai/workspace.py skills sync
 
 `clone` clones every repository that workspace.json lists and that is not here yet, from its `remote`, into its `path`,
 and connects the pre-commit verify hook in the ones that have the ai-starter harness, because a clone does not carry
@@ -14,7 +15,12 @@ after a pull that lists new repositories. With --team it also runs `local`.
 
 `local` keeps the user's personal settings in CLAUDE.local.md at the workspace root: ignored by git, loaded by Claude Code
 in every session there, and read by other agents as AGENTS.md says. It is made from .ai/CLAUDE.local.example.md the
-first time; later only its `Team:` line is changed. `check` reports personal files that git tracks and a missing team.
+first time; later only its `Team:` line is changed.
+
+`check` reports what a new member still has to do: personal files that git tracks, no team recorded, missing tools,
+listed repositories not cloned yet, and skills without a valid SKILL.md or a Claude Code link; `--access` also asks each
+remote whether the user can read it. `skills sync` links every skill in .agents/skills into .claude/skills, where Claude Code
+looks for them; it never deletes or overwrites.
 
 The workspace is the folder above this file. Output is JSON; exit code 1 on an error.
 Python 3.10+, standard library only. ai-starter's `workspace clone` runs this same code, so change it only here.
@@ -42,6 +48,12 @@ LOCAL_EXAMPLE = ".ai/CLAUDE.local.example.md"
 PERSONAL_FILES = [LOCAL_FILE, ".claude/settings.local.json"]
 TEAM_LINE = re.compile(r"^Team:[ \t]*(.*?)[ \t]*$", re.MULTILINE)
 TEAM_NAME = re.compile(r"[a-z][a-z0-9-]{0,31}\Z")
+# The only copy of each skill; .claude/skills holds links to it, as in repositories with the harness.
+SKILLS_DIR = ".agents/skills"
+CLAUDE_SKILLS_DIR = ".claude/skills"
+SKILL_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,63}\Z")
+# Python that repositories with the harness need for `verify` and the commit hook; this file itself runs on 3.9.
+HARNESS_PYTHON = (3, 10)
 
 
 class WorkspaceError(Exception):
@@ -257,19 +269,121 @@ def set_local_team(workspace: Path, team: str) -> dict:
     return {"path": str(path), "created": created, "team": team}
 
 
-def check(workspace: Path) -> dict:
-    manifest = load_manifest(workspace)
+def skill_names(workspace: Path) -> list[str]:
+    base = workspace / SKILLS_DIR
+    return sorted(p.name for p in base.iterdir() if p.is_dir() and not p.name.startswith(".")) if base.is_dir() else []
+
+
+def _link_ok(workspace: Path, name: str) -> bool:
+    link = workspace / CLAUDE_SKILLS_DIR / name
+    return link.exists() and link.resolve() == (workspace / SKILLS_DIR / name).resolve()
+
+
+def sync_skills(workspace: Path) -> dict:
+    """Creates missing .claude/skills/<name> links to .agents/skills/<name>. Never deletes or overwrites anything."""
+    adapters = workspace / CLAUDE_SKILLS_DIR
+    adapters.mkdir(parents=True, exist_ok=True)
+    names = skill_names(workspace)
+    created, conflicts = [], []
+    for name in names:
+        link = adapters / name
+        if _link_ok(workspace, name):
+            continue
+        if os.path.lexists(link):
+            conflicts.append(f"{CLAUDE_SKILLS_DIR}/{name}: exists but does not point at {SKILLS_DIR}/{name}")
+            continue
+        link.symlink_to(Path("..") / ".." / SKILLS_DIR / name, target_is_directory=True)
+        created.append(f"{CLAUDE_SKILLS_DIR}/{name}")
+    stale = [f"{CLAUDE_SKILLS_DIR}/{e.name}" for e in sorted(adapters.iterdir()) if e.is_symlink() and e.name not in names]
+    return {"ok": not conflicts, "created": created, "conflicts": conflicts, "stale": stale}
+
+
+def _frontmatter(text: str) -> dict[str, str] | None:
+    """The top-level `key: value` lines of a SKILL.md frontmatter, enough to check its name and description."""
+    if not text.startswith("---\n"):
+        return None
+    end = text.find("\n---", 3)
+    if end == -1:
+        return None
+    fields = {}
+    for line in text[4:end].splitlines():
+        match = re.match(r"([A-Za-z][\w-]*):[ \t]*(.*)$", line)
+        if match:
+            fields[match.group(1)] = match.group(2).strip().strip("\"'")
+    return fields
+
+
+def skill_problems(workspace: Path) -> list[str]:
     problems = []
-    tracked = _git(workspace, "ls-files", "--", *PERSONAL_FILES).split()
-    if tracked:
-        problems.append(f"Personal files are tracked by git: {tracked}. Untrack them with `git rm --cached <file>`, commit, "
-                        "and keep each person's copy local.")
+    for name in skill_names(workspace):
+        where = f"{SKILLS_DIR}/{name}"
+        if not SKILL_NAME.match(name):
+            problems.append(f"{where}: use lowercase letters, digits, and '-' in a skill folder name.")
+        path = workspace / where / "SKILL.md"
+        if not path.is_file():
+            problems.append(f"{where}: SKILL.md is missing.")
+            continue
+        meta = _frontmatter(path.read_text(encoding="utf-8"))
+        if meta is None:
+            problems.append(f"{where}/SKILL.md: starts without a --- frontmatter block.")
+            continue
+        if meta.get("name") != name:
+            problems.append(f"{where}/SKILL.md: frontmatter name must be {name!r}, the folder name.")
+        if not meta.get("description"):
+            problems.append(f"{where}/SKILL.md: frontmatter needs a description, which decides when the skill is used.")
+        if not _link_ok(workspace, name):
+            problems.append(f"{CLAUDE_SKILLS_DIR}/{name}: link is missing, so Claude Code cannot see the skill; run `python3 .ai/workspace.py skills sync`.")
+    return problems
+
+
+def _git_version() -> str | None:
+    try:
+        return subprocess.run(["git", "--version"], capture_output=True, text=True).stdout.strip() or None
+    except FileNotFoundError:
+        return None
+
+
+def check(workspace: Path, access: bool = False) -> dict:
+    """Problems block work in this workspace; warnings name what is still to do or matters only to some teams."""
+    manifest = load_manifest(workspace)
+    problems, warnings = [], []
+    git_version = _git_version()
+    if git_version is None:
+        problems.append("git is not installed or not on PATH. On macOS, run `xcode-select --install`.")
+    else:
+        tracked = _git(workspace, "ls-files", "--", *PERSONAL_FILES).split()
+        if tracked:
+            problems.append(f"Personal files are tracked by git: {tracked}. Untrack them with `git rm --cached <file>`, commit, "
+                            "and keep each person's copy local.")
+    python = ".".join(map(str, sys.version_info[:3]))
+    if sys.version_info[:2] < HARNESS_PYTHON:
+        warnings.append(f"Python {python}: repositories with the harness need {'.'.join(map(str, HARNESS_PYTHON))}+ for `verify` and the commit hook. "
+                        "Install a newer Python (for example `brew install python`) if you commit in them.")
     team = _local_team(workspace)
     if not team:
         problems.append(f"No team is recorded in {LOCAL_FILE}; run `python3 .ai/workspace.py local --team <team>`.")
     elif manifest.get("teams") and team not in manifest["teams"]:
         problems.append(f"{LOCAL_FILE} names team {team!r}, which workspace.json does not list: {manifest['teams']}.")
-    return {"ok": not problems, "workspace": str(workspace), "team": team or None, "teams": manifest.get("teams", []), "problems": problems}
+    problems += skill_problems(workspace)
+
+    missing = [r["name"] for r in manifest["repos"] if not (workspace / r["path"] / ".git").exists()]
+    if missing:
+        warnings.append(f"Not cloned yet: {missing}. Run `python3 .ai/workspace.py clone`; one you cannot access needs a grant on its remote.")
+    report = {"ok": not problems, "workspace": str(workspace), "team": team or None, "teams": manifest.get("teams", []),
+              "tools": {"git": git_version, "python": python}, "missing": missing, "skills": skill_names(workspace),
+              "problems": problems, "warnings": warnings}
+    if access and git_version is not None:
+        report["access"] = {}
+        for repo in manifest["repos"]:
+            if not repo.get("remote") or has_credentials(repo["remote"]):
+                continue
+            try:
+                _git(workspace, "ls-remote", "--heads", repo["remote"])
+                report["access"][repo["name"]] = "ok"
+            except WorkspaceError as error:
+                report["access"][repo["name"]] = str(error)
+                warnings.append(f"No read access to {repo['name']} ({repo['remote']}); ask for it on the remote.")
+    return report
 
 
 def main(argv: list[str]) -> int:
@@ -280,15 +394,19 @@ def main(argv: list[str]) -> int:
     clone_parser.add_argument("--team", default="", help="also record the team in CLAUDE.local.md")
     local_parser = sub.add_parser("local", help="create or update CLAUDE.local.md with the user's team")
     local_parser.add_argument("--team", required=True)
-    sub.add_parser("check", help="report tracked personal files and a missing team")
+    check_parser = sub.add_parser("check", help="report what is still to do: team, tools, repositories, skills")
+    check_parser.add_argument("--access", action="store_true", help="also check read access to every remote")
+    sub.add_parser("skills").add_subparsers(dest="action", required=True).add_parser("sync", help="link .agents/skills into .claude/skills")
     args = parser.parse_args(argv)
     try:
         if args.command == "clone":
             report = clone(WORKSPACE, args.name, args.team)
         elif args.command == "local":
             report = {"ok": True, **set_local_team(WORKSPACE, args.team)}
+        elif args.command == "check":
+            report = check(WORKSPACE, args.access)
         else:
-            report = check(WORKSPACE)
+            report = sync_skills(WORKSPACE)
     except WorkspaceError as error:
         print(json.dumps({"ok": False, "error": str(error)}, indent=2, ensure_ascii=False))
         return 1

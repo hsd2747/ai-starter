@@ -3,9 +3,11 @@
 /*
 !/.gitignore
 !/AGENTS.md
+!/README.md
 !/CLAUDE.md
 !/workspace.json
 !/.claude/
+!/.agents/
 !/.ai/
 
 # Personal Claude Code settings stay on each machine; the shared ones are in .claude/settings.json.

@@ -197,6 +197,38 @@ class CloneTest(WorkspaceCase):
         self.assertEqual(code, 1)
         self.assertIn("tracked by git", report["problems"][0])
 
+    def test_workspace_skills_are_shared_and_linked_for_claude_code(self):
+        url = self.share()
+        tracked = git(self.ws, "ls-files").split()
+        for path in ("README.md", ".agents/skills/workspace-onboard/SKILL.md", ".claude/skills/workspace-onboard"):
+            self.assertIn(path, tracked)
+        mate = self.base / "mate"
+        self.assertEqual(run("workspace", "clone", "--path", str(mate), "--url", str(url), "--team", "dev")[0], 0)
+        self.assertTrue((mate / ".claude/skills/workspace-onboard/SKILL.md").is_file())
+
+        code, report = self.tool(mate, "check", "--access")
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report["skills"], ["workspace-onboard"])
+        self.assertEqual(report["access"], {"be": "ok"})
+        self.assertEqual(report["missing"], ["legacy"])
+
+        skill = mate / ".agents/skills/plan-review"
+        skill.mkdir()
+        (skill / "SKILL.md").write_text("---\nname: plan-review\ndescription: Review a plan. Use for 기획 리뷰.\n---\n\n# Plan review\n", encoding="utf-8")
+        code, report = self.tool(mate, "check")
+        self.assertEqual(code, 1)
+        self.assertIn("skills sync", report["problems"][0])
+        code, report = self.tool(mate, "skills", "sync")
+        self.assertEqual((code, report["created"]), (0, [".claude/skills/plan-review"]), report)
+        self.assertTrue((mate / ".claude/skills/plan-review/SKILL.md").is_file())
+        self.assertEqual(self.tool(mate, "check")[0], 0)
+        self.assertEqual(self.tool(mate, "skills", "sync")[1]["created"], [])
+
+        (skill / "SKILL.md").write_text("---\nname: other\n---\n", encoding="utf-8")
+        problems = self.tool(mate, "check")[1]["problems"]
+        self.assertTrue(any("must be 'plan-review'" in p for p in problems), problems)
+        self.assertTrue(any("needs a description" in p for p in problems), problems)
+
     def test_check_asks_for_a_team_until_one_is_recorded(self):
         url = self.share()
         mate = self.base / "mate"
