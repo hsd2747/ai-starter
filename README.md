@@ -12,7 +12,9 @@ Two things are managed separately:
 
 `new`, `adopt --install`, and `upgrade` combine both. The starter itself is never modified by the generator.
 
-Requirements: git and Python 3.10 or newer.
+Requirements: git and Python 3.10 or newer, for this starter and for everyone who uses a workspace or repository it creates.
+On an older Python, `tool/starter.py`, a workspace's `.ai/workspace.py`, and a repository's `tool/ai.py` stop with how to install a newer one,
+so commits in repositories with the harness stop at the pre-commit hook. Only the guard hook keeps running, because a failing hook would let every tool call through.
 
 ## Create a repository
 
@@ -39,6 +41,10 @@ python3 tool/starter.py sync --workspace ~/work/my-product                      
 `unregister` removes the entry and its table row; the folder and every file in it, an installed harness included, stay as they are.
 Run `sync` after editing roles or remotes in `workspace.json`, or after installing the harness in a listed repository.
 
+`adopt` without `--install`, `unregister`, and `sync` run the workspace's own `.ai/workspace.py` code and add the schema check on top,
+so a teammate without this starter gets the same result from `python3 .ai/workspace.py register`, `unregister`, and `sync` in the workspace.
+Installing the harness still needs this starter.
+
 `workspace.json` holds names, paths, roles, and remotes only. The table's Harness column is read from each repository:
 **managed** when it has `.ai/harness.json`, **registered** otherwise.
 
@@ -60,25 +66,36 @@ A teammate does not need this starter for that. Every workspace carries the same
 ```bash
 git clone git@example.com:team/my-product-workspace.git ~/work/my-product && cd ~/work/my-product
 python3 .ai/workspace.py clone --team pm [--name be]   # clone what is missing, record the team
-python3 .ai/workspace.py check                         # personal files tracked by git, or no team recorded
+python3 .ai/workspace.py check [--access]              # what is still missing: team, tools, repositories, access, skills, team rules files
 python3 .ai/workspace.py update                        # later: pull the workspace, clone new repositories, fast-forward the rest
 ```
+
+`update` only fast-forwards: it skips a repository with uncommitted changes to tracked files, a detached HEAD, or a branch without an upstream,
+and never stashes, resets, merges, or switches branches.
 
 A repository the person cannot access is reported under `failed` and the others are still cloned, so access can be granted per repository
 on the remote. Team members who are not developers can use the same workspace.
 
 ### Onboarding and workspace skills
 
-A workspace ships a `README.md` for people and the `workspace-onboard` skill for its agent sessions: `check` reports what a new member still
-lacks (team, tools, repositories, access with `--access`, skills) and the skill walks through each item, by team. Both have a marked block
-(`workspace:setup`, `workspace:onboarding`) for the workspace's own steps, which upgrades keep.
+A workspace ships a `README.md` for people and three skills for its agent sessions:
+
+- `workspace-onboard`: `check` reports what a new member still lacks (team, tools, repositories, access with `--access`, skills),
+  and the skill walks through each item, by team.
+- `workspace-repos`: lists or unlists a repository, or changes its role or remote, through `register`, `unregister`, and `sync`.
+- `workspace-rules`: changes a workspace or team rule, adds a team, records a contract between repositories, or edits the onboarding steps.
+
+The README and `workspace-onboard` have marked blocks (`workspace:readme`, `workspace:setup`, `workspace:onboarding`) for the workspace's own text,
+which upgrades keep.
 
 A team adds its own skills as `.agents/skills/<name>/SKILL.md` in the workspace and links them for Claude Code with
 `python3 .ai/workspace.py skills sync`. They load in sessions opened at the workspace root. Names starting with `workspace-` are reserved for skills the starter ships.
 
 ### Teams and personal settings
 
-`workspace.json` may list `teams` (for example `["dev", "pm", "pd"]`). Each person's `CLAUDE.local.md` at the workspace root, made by
+`workspace.json` may list `teams` (for example `["dev", "pm", "pd"]`), and each team keeps its own rules in `.ai/teams/<team>.md`.
+`python3 .ai/workspace.py team add <name>` adds a team with its file, and `check` warns about a team without one or a file for no listed team.
+Each person's `CLAUDE.local.md` at the workspace root, made by
 `python3 .ai/workspace.py local --team <team>` from `.ai/CLAUDE.local.example.md`, names their team and holds their own preferences.
 Git ignores it and Claude Code loads it in every session there. The workspace `AGENTS.md` says that a rule marked with teams, such as "(dev)",
 applies only to them, and that one person's values (names, account IDs) never go into shared files but are looked up at run time or kept in `CLAUDE.local.md`.
@@ -86,7 +103,8 @@ applies only to them, and that one person's values (names, account IDs) never go
 The starter's `workspace clone` runs that file from `workspace-template/`, and adds the root clone from `--url`, the full schema check,
 warnings about starter commits it lacks, and the saved workspace list. Older workspaces get the file with `upgrade --root-only`.
 
-`workspace clone` clones the workspace repository into an empty or missing folder when `--url` is given, then every listed repository
+`workspace clone` clones the workspace repository into an empty or missing folder when `--url` is given, and keeps it only when its `workspace.json`
+is valid and the requested `--name` and `--team` pass; otherwise the folder is left as it was. It then clones every listed repository
 that is not there yet from its remote, and connects the pre-commit hook in those with the harness. It never touches a repository that is already there,
 skips entries without a remote, and stops before cloning anything when a path holds a folder that is not a git repository.
 Teammates also need this starter at a commit that contains the one the workspace recorded, for `upgrade`; the report warns when it does not.
@@ -103,8 +121,8 @@ python3 tool/starter.py harness upgrade --repo ~/work/my-product/admin --dry-run
 The repository can be anywhere outside this starter; nothing outside it is written. `install` stops before it writes anything when
 any harness file (`AGENTS.md`, `CLAUDE.md`, `.claude/settings.json`, ...) already exists; only `.gitignore` and `.gitattributes`
 are merged by appending missing lines. `harness status` lists those files under `conflicts` before an install, and lists other agent
-instructions the harness would leave in place (`.cursorrules`, `.github/copilot-instructions.md`, the repository's own `.claude/` entries, ...)
-under `existingInstructions`; the `starter-install-harness` skill proposes how to merge each one before it installs.
+instructions the harness would leave in place (`.cursorrules`, `.github/copilot-instructions.md`, files set aside as `*.pre-harness.*`,
+the repository's own entries under `.claude/`, `.agents/`, and `.gemini/`, ...) under `existingInstructions`; the `starter-install-harness` skill proposes how to merge each one before it installs.
 
 After the files are in place, `install` (and `adopt --install`) runs the repository's `python3 tool/ai.py hooks install`, which points
 `core.hooksPath` at `.githooks` so that every commit runs `verify`. When the repository already runs hooks from another tool (husky, lefthook,
@@ -119,8 +137,10 @@ python3 tool/starter.py upgrade --workspace ~/work/my-product --dry-run   # plan
 python3 tool/starter.py upgrade --workspace ~/work/my-product             # apply
 python3 tool/starter.py upgrade --workspace ~/work/my-product --name be   # one listed repository only
 python3 tool/starter.py upgrade --workspace ~/work/my-product --root-only  # the workspace root only, no repository
-python3 tool/starter.py harness upgrade --repo ~/work/solo                # a repository no workspace lists
+python3 tool/starter.py harness upgrade --repo ~/work/solo                # one repository, listed in a workspace or not
 ```
+
+`--name` upgrades only the named repositories and leaves the workspace root alone; `--root-only` does the opposite.
 
 Each target recorded the starter commit it came from (`.ai/harness.json`, or `workspace.json` for the workspace root). For every harness file,
 `upgrade` merges three versions with `git merge-file`: that commit's template, the current template, and the file in the target.
@@ -129,8 +149,9 @@ which `verify` then reports until they are resolved. Files the starter removed a
 
 Three kinds of content are not merged line by line:
 
-- **Marked blocks.** Text between `project:<name>` (or `workspace:<name>`) start and end markers belongs to the target: the repository map
-  and rules in `AGENTS.md`, the commands in `.githooks/pre-commit`, the project section of `.gitignore`, and the contracts and workspace rules in the workspace `AGENTS.md`.
+- **Marked blocks.** Text between `project:<name>` (or `workspace:<name>`) start and end markers belongs to the target: the repository map,
+  dependency rule, and rules in `AGENTS.md`, the commands in `.githooks/pre-commit`, the project section of `.gitignore`, the repository table,
+  contracts, and workspace rules in the workspace `AGENTS.md`, the workspace's own text in its `README.md`, and its onboarding steps in `workspace-onboard`.
   The merge covers only the text around the blocks, and each block keeps the target's text.
 - **JSON files** merge by key, and lists of plain values merge by item. Where both sides changed the same key, the target's value stays
   and the key is listed under `kept`. A `schemaVersion` raised by the starter needs a migration step in `MIGRATIONS` in `tool/ai_starter/merge.py`.
@@ -145,7 +166,7 @@ In the rare case that moving in stops partway, the error lists the files already
 
 ## Saved workspaces
 
-`new`, `adopt`, `unregister`, `sync`, and `upgrade` save their workspace in `~/.claude/ai-starter/workspaces.json`, most recent first, so the skills below
+`new`, `adopt`, `unregister`, `sync`, `upgrade`, and `workspace clone` save their workspace in `~/.claude/ai-starter/workspaces.json`, most recent first, so the skills below
 know where your workspaces are without asking each time.
 
 ```bash
@@ -177,15 +198,16 @@ Onboarding from this session does not load the repository's own hook and permiss
 
 ```text
 my-product/                  # its own git repository; tracks only the files below
-├── AGENTS.md                # repository roles (generated table) and contracts between repositories
+├── AGENTS.md                # repository roles (generated table), contracts between repositories, workspace rules
 ├── README.md                # for people: getting started, day-to-day use
 ├── CLAUDE.md                # @AGENTS.md
-├── workspace.json           # source of the repository list
+├── workspace.json           # source of the repository list and teams
 ├── .gitignore               # ignores every repository folder
 ├── .claude/settings.json    # guard hook for sessions opened at the workspace root
-├── .agents/skills/          # workspace skills, e.g. workspace-onboard; .claude/skills/ links to them
+├── .agents/skills/          # workspace-onboard, workspace-repos, workspace-rules, and the team's own; .claude/skills/ links to them
 ├── .ai/guard/               # copy of the guard the hook runs
-├── .ai/workspace.py         # `clone`, `local`, `check`: no starter needed
+├── .ai/teams/<team>.md      # rules for one team
+├── .ai/workspace.py         # clone, update, local, check, skills sync, register, unregister, sync, team add: no starter needed
 ├── .ai/CLAUDE.local.example.md  # template of each person's CLAUDE.local.md (ignored), which names their team
 ├── be/                      # managed: has the harness
 └── admin/                   # registered: role only

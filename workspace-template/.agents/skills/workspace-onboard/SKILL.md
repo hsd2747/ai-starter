@@ -11,7 +11,9 @@ Never ask for, print, or store a token or password; credentials go into the user
 
 ## 1. Where things stand
 
-Run `python3 .ai/workspace.py check`. If `python3` is missing, explain how to get it (on macOS `xcode-select --install`, which also installs git) and stop there.
+Run `python3 .ai/workspace.py check`. Python 3.10 or later is required for every team. If `python3` is missing, or the command stops because
+the Python is older, explain how to install a newer one (on macOS `brew install python` or the installer from python.org; `xcode-select --install`
+gives git but only Python 3.9), have the user check `python3 --version` in a new terminal, and stop there until it reports 3.10 or later.
 Summarize `problems` first, then `warnings`, in plain words. Use the rest of this skill only for what the report shows is missing.
 
 ## 2. Team
@@ -43,7 +45,7 @@ No workspace-specific steps yet. Write them here, one numbered line each: connec
 ## 6. By team
 
 - **Developers:** each repository has its own setup; point to its README instead of running it unasked. Work in a repository by opening a session inside it,
-  so that its own `AGENTS.md`, checks, and skills apply. A `check` warning about Python below 3.10 matters for them: the harness's `verify` and commit hook need it.
+  so that its own `AGENTS.md`, checks, and skills apply.
 - **Everyone else:** work from this workspace root. The repositories are here to read: for planning, reviews, and answering questions about how things work.
   Changing one follows that repository's own rules and the access its remote grants.
 

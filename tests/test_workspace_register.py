@@ -162,6 +162,16 @@ class WorkspaceRegisterTest(WorkspaceCase):
         self.assertEqual(snapshot(self.ws), before)
         self.assertEqual(leftovers(self.ws), [])
 
+    def test_python_older_than_3_10_is_refused_with_how_to_install_a_newer_one(self):
+        from ai_starter import paths
+        tool = paths.workspace_tool()
+        self.assertIsNone(tool.python_problem((3, 10, 0)))
+        self.assertIsNone(tool.python_problem((3, 13, 1)))
+        problem = tool.python_problem((3, 9, 6))
+        self.assertIn("Python 3.9.6 found", problem)
+        self.assertIn("3.10 or later", problem)
+        self.assertIn("brew install python", problem)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -13,7 +13,9 @@ and a small tool (`.ai/workspace.py`). The repositories themselves are cloned ne
 You need:
 
 - **Access** to the repositories listed in `workspace.json`: read access on each remote, granted per repository. Ask for what your team uses.
-- **git and Python 3.9 or later.** On macOS, `xcode-select --install` installs both. Developers who commit in repositories with the harness need Python 3.10 or later.
+- **git and Python 3.10 or later**, whatever your team. On macOS, `xcode-select --install` installs git, but its Python is 3.9:
+  install a newer one with `brew install python` or the installer from python.org, and check `python3 --version` in a new terminal.
+  On an older Python every `.ai/workspace.py` command stops and says so.
 - **Git access to the remotes**, for example an SSH key registered on the host. `git ls-remote <remote>` tells you whether it works.
 - **Claude Code**, or another agent that reads `AGENTS.md`.
 

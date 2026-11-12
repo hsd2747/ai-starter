@@ -30,8 +30,8 @@ Open this repository in your agent (Claude Code, Codex, Cursor, Gemini CLI, Copi
 `AGENTS.md` sends every agent to `repo-onboard` while `.ai/config.json` says `"onboarded": false`. Onboarding writes the settings and checks
 in `.ai/config.json`, the repository map in `AGENTS.md`, and the first architecture pages in `wiki/`, then runs `doctor` and `verify --all`.
 
-`.ai/harness.json` records the starter commit and a hash of every file it installed. Keep it: `python3 tool/starter.py upgrade`, run in the starter,
-uses that commit as the base of a 3-way merge per harness file, so both your edits and the starter's arrive. It writes only harness files that are
+`.ai/harness.json` records the starter commit and a hash of every file it installed. Keep it: `python3 tool/starter.py upgrade` (or `harness upgrade --repo <path>`
+for a repository no workspace lists), run in the starter, uses that commit as the base of a 3-way merge per harness file, so both your edits and the starter's arrive. It writes only harness files that are
 committed and unmodified, and leaves conflict markers where both sides changed the same lines. Text between `project:<name>` markers
 is yours: the merge keeps it as it is. JSON files merge by key, and where both sides changed a key your value stays.
 
@@ -47,6 +47,9 @@ python3 tool/ai.py wiki lint
 python3 tool/ai.py adapters sync          # create missing .claude/skills links after adding a skill
 python3 tool/ai.py hooks install          # connect the pre-commit hook in this clone
 ```
+
+The CLI needs Python 3.10 or later. On an older one every command stops with how to install a newer one, so commits stop at the pre-commit hook;
+only the guard hook keeps running.
 
 Built-in checks run for every project: whitespace and conflict markers, secret scan (`.env` files, signing keys, and credential files that git tracks or does not ignore, plus key patterns),
 harness configuration, JSON syntax, Markdown link targets, wiki lint, and the harness self-test.

@@ -42,7 +42,7 @@ Installing the harness in a repository needs ai-starter (`adopt --install` or `h
 `team add` adds a team to `teams` in workspace.json and creates its rules file, .ai/teams/<name>.md, unless one is there already.
 
 The workspace is the folder above this file. Output is JSON; exit code 1 on an error.
-Python 3.10+, standard library only. ai-starter's `workspace clone` runs this same code, so change it only here.
+Python 3.10+, standard library only; on an older Python every command stops and says how to install a newer one. ai-starter's `workspace clone` runs this same code, so change it only here.
 """
 
 from __future__ import annotations
@@ -77,8 +77,9 @@ TEAMS_DIR = ".ai/teams"
 SKILLS_DIR = ".agents/skills"
 CLAUDE_SKILLS_DIR = ".claude/skills"
 SKILL_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,63}\Z")
-# Python that repositories with the harness need for `verify` and the commit hook; this file itself runs on 3.9.
-HARNESS_PYTHON = (3, 10)
+# The harness in the repositories needs it too, so an older Python is refused here instead of failing later in a repository.
+# This file must still parse on older versions (macOS ships 3.9) so that they reach the refusal and not a SyntaxError.
+REQUIRED_PYTHON = (3, 10)
 # Every session at the root loads AGENTS.md whole; past this, `check` warns. Claude Code's guidance for one instruction file.
 AGENTS_LINE_LIMIT = 200
 
@@ -614,6 +615,15 @@ def team_warnings(workspace: Path, teams: list[str]) -> list[str]:
     return warnings
 
 
+def python_problem(version: tuple = tuple(sys.version_info[:3])) -> str | None:
+    """Why this Python cannot run the workspace commands, with how to install a newer one, or None."""
+    if tuple(version[:2]) >= REQUIRED_PYTHON:
+        return None
+    found, required = ".".join(map(str, version)), ".".join(map(str, REQUIRED_PYTHON))
+    return (f"Python {found} found; this workspace needs Python {required} or later. Install it (on macOS `brew install python`, "
+            "or the installer from python.org), open a new terminal, check `python3 --version`, and run the command again.")
+
+
 def _git_version() -> str | None:
     try:
         return subprocess.run(["git", "--version"], capture_output=True, text=True).stdout.strip() or None
@@ -640,9 +650,6 @@ def check(workspace: Path, access: bool = False) -> dict:
             problems.append(f"Personal files are tracked by git: {tracked}. Untrack them with `git rm --cached <file>`, commit, "
                             "and keep each person's copy local.")
     python = ".".join(map(str, sys.version_info[:3]))
-    if sys.version_info[:2] < HARNESS_PYTHON:
-        warnings.append(f"Python {python}: repositories with the harness need {'.'.join(map(str, HARNESS_PYTHON))}+ for `verify` and the commit hook. "
-                        "Install a newer Python (for example `brew install python`) if you commit in them.")
     team = _local_team(workspace)
     if not team:
         problems.append(f"No team is recorded in {LOCAL_FILE}; run `python3 .ai/workspace.py local --team <team>`.")
@@ -678,6 +685,10 @@ def check(workspace: Path, access: bool = False) -> dict:
 
 
 def main(argv: list[str]) -> int:
+    problem = python_problem()
+    if problem:
+        print(json.dumps({"ok": False, "error": problem}, indent=2, ensure_ascii=False))
+        return 1
     parser = argparse.ArgumentParser(prog="python3 .ai/workspace.py", description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
     clone_parser = sub.add_parser("clone", help="clone the listed repositories that are not here yet")
